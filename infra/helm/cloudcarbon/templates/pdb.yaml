@@ -1,0 +1,29 @@
+{{- if and .Values.api.enabled .Values.podDisruptionBudget.api.enabled }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "cloudcarbon.fullname" . }}-api
+  labels:
+    {{- include "cloudcarbon.labels" . | nindent 4 }}
+    app.kubernetes.io/component: api
+spec:
+  minAvailable: {{ .Values.podDisruptionBudget.api.minAvailable }}
+  selector:
+    matchLabels:
+      {{- include "cloudcarbon.api.selectorLabels" . | nindent 6 }}
+{{- end }}
+{{- if and .Values.agents.enabled .Values.podDisruptionBudget.agents.enabled }}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "cloudcarbon.fullname" . }}-agents
+  labels:
+    {{- include "cloudcarbon.labels" . | nindent 4 }}
+    app.kubernetes.io/component: agents
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      {{- include "cloudcarbon.agents.selectorLabels" . | nindent 6 }}
+{{- end }}

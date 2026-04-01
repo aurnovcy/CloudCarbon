@@ -1,0 +1,101 @@
+[
+  {
+    "billing_account_id": "ABCDEF-123456-GHIJKL",
+    "service": {"id": "6F81-5844-456A", "description": "Compute Engine"},
+    "sku": {"id": "0048-21CE-74C0", "description": "N2 Instance Core running in Americas"},
+    "usage_start_time": "2026-03-01T00:00:00Z",
+    "usage_end_time": "2026-03-01T01:00:00Z",
+    "project": {
+      "id": "my-gcp-project",
+      "number": "123456789",
+      "name": "My GCP Project",
+      "labels": {"environment": "production", "team": "platform"}
+    },
+    "labels": [{"key": "environment", "value": "production"}, {"key": "team", "value": "platform"}],
+    "system_labels": [],
+    "location": {
+      "location": "us-central1",
+      "country": "US",
+      "region": "us-central1",
+      "zone": "us-central1-a"
+    },
+    "resource": {
+      "name": "projects/my-gcp-project/zones/us-central1-a/instances/prod-instance-001",
+      "global_name": "//compute.googleapis.com/projects/my-gcp-project/zones/us-central1-a/instances/prod-instance-001"
+    },
+    "cost": 0.048,
+    "currency": "USD",
+    "currency_conversion_rate": 1.0,
+    "usage": {"amount": 1.0, "unit": "h", "amount_in_pricing_units": 1.0, "pricing_unit": "hour"},
+    "credits": [],
+    "invoice": {"month": "202603"},
+    "cost_type": "regular",
+    "adjustment_info": null
+  },
+  {
+    "billing_account_id": "ABCDEF-123456-GHIJKL",
+    "service": {"id": "95FF-2EF5-5EA1", "description": "Cloud Storage"},
+    "sku": {"id": "0004-AC1D-3927", "description": "Standard Storage US Multi-region"},
+    "usage_start_time": "2026-03-01T00:00:00Z",
+    "usage_end_time": "2026-04-01T00:00:00Z",
+    "project": {
+      "id": "my-gcp-project",
+      "number": "123456789",
+      "name": "My GCP Project",
+      "labels": {"environment": "production", "team": "data"}
+    },
+    "labels": [{"key": "environment", "value": "production"}, {"key": "team", "value": "data"}],
+    "system_labels": [],
+    "location": {
+      "location": "us",
+      "country": "US",
+      "region": "us",
+      "zone": null
+    },
+    "resource": {
+      "name": "my-data-bucket",
+      "global_name": "//storage.googleapis.com/my-data-bucket"
+    },
+    "cost": 5.12,
+    "currency": "USD",
+    "currency_conversion_rate": 1.0,
+    "usage": {"amount": 256.0, "unit": "gibibyte month", "amount_in_pricing_units": 256.0, "pricing_unit": "gibibyte month"},
+    "credits": [],
+    "invoice": {"month": "202603"},
+    "cost_type": "regular",
+    "adjustment_info": null
+  },
+  {
+    "billing_account_id": "ABCDEF-123456-GHIJKL",
+    "service": {"id": "9662-B51E-5089", "description": "Cloud SQL"},
+    "sku": {"id": "0007-9D5B-4B0E", "description": "Cloud SQL for PostgreSQL: Zonal - vCPU in Americas"},
+    "usage_start_time": "2026-03-01T00:00:00Z",
+    "usage_end_time": "2026-03-01T01:00:00Z",
+    "project": {
+      "id": "my-gcp-project",
+      "number": "123456789",
+      "name": "My GCP Project",
+      "labels": {"environment": "production", "team": "data"}
+    },
+    "labels": [{"key": "environment", "value": "production"}, {"key": "team", "value": "data"}],
+    "system_labels": [],
+    "location": {
+      "location": "us-central1",
+      "country": "US",
+      "region": "us-central1",
+      "zone": "us-central1-a"
+    },
+    "resource": {
+      "name": "projects/my-gcp-project/instances/prod-postgres",
+      "global_name": "//sqladmin.googleapis.com/projects/my-gcp-project/instances/prod-postgres"
+    },
+    "cost": 0.0413,
+    "currency": "USD",
+    "currency_conversion_rate": 1.0,
+    "usage": {"amount": 2.0, "unit": "h", "amount_in_pricing_units": 2.0, "pricing_unit": "hour"},
+    "credits": [{"name": "Sustained use discount", "amount": -0.0124, "full_name": "Sustained use discount", "id": "sud", "type": "SUSTAINED_USAGE_DISCOUNT"}],
+    "invoice": {"month": "202603"},
+    "cost_type": "regular",
+    "adjustment_info": null
+  }
+]

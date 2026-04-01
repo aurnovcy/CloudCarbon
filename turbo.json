@@ -1,0 +1,37 @@
+{
+  "$schema": "https://turbo.build/schema.json",
+  "globalDependencies": [".env"],
+  "pipeline": {
+    "build": {
+      "dependsOn": ["^build"],
+      "outputs": ["dist/**", ".next/**", "build/**"]
+    },
+    "dev": {
+      "cache": false,
+      "persistent": true
+    },
+    "lint": {
+      "outputs": []
+    },
+    "test": {
+      "dependsOn": ["build"],
+      "outputs": ["coverage/**"]
+    },
+    "typecheck": {
+      "dependsOn": ["^build"],
+      "outputs": []
+    },
+    "apps/api#build": {
+      "dependsOn": ["packages/focus-schema#build", "packages/carbon-models#build"],
+      "outputs": []
+    },
+    "apps/agents#build": {
+      "dependsOn": ["packages/focus-schema#build", "packages/carbon-models#build"],
+      "outputs": []
+    },
+    "apps/web#build": {
+      "dependsOn": ["packages/api-types#build"],
+      "outputs": ["dist/**"]
+    }
+  }
+}

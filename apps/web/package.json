@@ -1,0 +1,16 @@
+{
+  "name": "@cloudcarbon/web",
+  "version": "0.1.0",
+  "private": true,
+  "description": "CloudCarbon React + Vite frontend (placeholder — Lovable will own this)",
+  "type": "module",
+  "scripts": {
+    "build": "echo 'Web app is managed by Lovable — skipping build'",
+    "dev": "echo 'Web app is managed by Lovable — skipping dev'",
+    "lint": "echo 'Web app is managed by Lovable — skipping lint'",
+    "typecheck": "echo 'Web app is managed by Lovable — skipping typecheck'"
+  },
+  "dependencies": {
+    "@cloudcarbon/api-types": "workspace:*"
+  }
+}

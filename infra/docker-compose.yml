@@ -1,0 +1,99 @@
+version: "3.9"
+
+# ---------------------------------------------------------------------------
+# CloudCarbon — Production Docker Compose
+# ---------------------------------------------------------------------------
+# Usage: docker compose -f infra/docker-compose.yml up -d
+# All services read environment variables from .env at the repo root.
+# ---------------------------------------------------------------------------
+
+services:
+
+  # --------------------------------------------------------------------------
+  # PostgreSQL 15
+  # --------------------------------------------------------------------------
+  postgres:
+    image: postgres:15-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-cloudcarbon}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-cloudcarbon}
+      POSTGRES_DB: ${POSTGRES_DB:-cloudcarbon}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-cloudcarbon} -d ${POSTGRES_DB:-cloudcarbon}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  # --------------------------------------------------------------------------
+  # Redis 7
+  # --------------------------------------------------------------------------
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+
+  # --------------------------------------------------------------------------
+  # CloudCarbon API (FastAPI)
+  # --------------------------------------------------------------------------
+  api:
+    build:
+      context: ../apps/api
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - "${API_PORT:-8000}:8000"
+    env_file:
+      - ../.env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-cloudcarbon}:${POSTGRES_PASSWORD:-cloudcarbon}@postgres:5432/${POSTGRES_DB:-cloudcarbon}
+      REDIS_URL: redis://redis:6379/0
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # --------------------------------------------------------------------------
+  # CloudCarbon Agent Runner
+  # --------------------------------------------------------------------------
+  agents:
+    build:
+      context: ../apps/agents
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    env_file:
+      - ../.env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-cloudcarbon}:${POSTGRES_PASSWORD:-cloudcarbon}@postgres:5432/${POSTGRES_DB:-cloudcarbon}
+      REDIS_URL: redis://redis:6379/0
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+volumes:
+  postgres_data:
+  redis_data:

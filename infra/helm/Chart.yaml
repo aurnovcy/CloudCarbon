@@ -1,0 +1,16 @@
+apiVersion: v2
+name: cloudcarbon
+description: Open-source multi-cloud GreenOps platform
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+keywords:
+  - greenops
+  - finops
+  - carbon
+  - cloud
+home: https://github.com/cloudcarbon/cloudcarbon
+sources:
+  - https://github.com/cloudcarbon/cloudcarbon
+maintainers:
+  - name: CloudCarbon Contributors

@@ -1,0 +1,2772 @@
+openapi: "3.1.0"
+
+info:
+  title: CloudCarbon API
+  description: |
+    Open-source multi-cloud GreenOps platform for unified cost and carbon optimisation.
+
+    **Authentication**: All endpoints (except `/health`) require either:
+    - A `Bearer` JWT access token in the `Authorization` header, or
+    - A `cc_`-prefixed API key in the `X-API-Key` header.
+
+    **Session status**: Session 5 (final) — agent infrastructure, five autonomous agents,
+    notification delivery, Prometheus metrics, structured logging, rate limiting, and
+    production Helm chart are complete.
+  version: "0.5.0"
+  license:
+    name: Apache 2.0
+    url: https://www.apache.org/licenses/LICENSE-2.0
+
+servers:
+  - url: http://localhost:8000
+    description: Local development
+  - url: https://api.cloudcarbon.io
+    description: Production (future)
+
+# =============================================================================
+# Security
+# =============================================================================
+
+security:
+  - BearerAuth: []
+  - ApiKeyAuth: []
+
+# =============================================================================
+# Tags
+# =============================================================================
+
+tags:
+  - name: Health
+    description: Service health and readiness checks
+  - name: Authentication
+    description: JWT, OAuth2, and API key management
+  - name: Accounts
+    description: Cloud account connection management
+  - name: Ingestion
+    description: Billing data ingestion — file upload and provider sync
+  - name: Records
+    description: FOCUS 1.0 billing records query and export
+  - name: Enrichment
+    description: GHG emissions and water enrichment (Session 3)
+  - name: Recommendations
+    description: GreenOps optimisation recommendations (Session 4)
+  - name: Agents
+    description: Autonomous agent runs (Session 4)
+  - name: Reports
+    description: Carbon and cost reports (Session 5)
+  - name: Query
+    description: Ad-hoc FOCUS record queries (Session 3)
+  - name: Policies
+    description: Governance policy rules (Session 5)
+
+# =============================================================================
+# Components
+# =============================================================================
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: JWT access token obtained from /auth/token
+
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-API-Key
+      description: API key prefixed with `cc_`, obtained from the dashboard
+
+  # ---------------------------------------------------------------------------
+  # Shared Parameters
+  # ---------------------------------------------------------------------------
+
+  parameters:
+    PageParam:
+      name: page
+      in: query
+      schema:
+        type: integer
+        default: 1
+        minimum: 1
+      description: Page number for pagination
+
+    PageSizeParam:
+      name: page_size
+      in: query
+      schema:
+        type: integer
+        default: 50
+        minimum: 1
+        maximum: 500
+      description: Number of items per page
+
+    AccountIdPath:
+      name: account_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+      description: Cloud account UUID
+
+    JobIdPath:
+      name: job_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+      description: Sync job UUID
+
+  # ---------------------------------------------------------------------------
+  # Schemas
+  # ---------------------------------------------------------------------------
+
+  schemas:
+
+    # -------------------------------------------------------------------------
+    # FOCUS 1.0 Core Record
+    # -------------------------------------------------------------------------
+
+    FocusRecord:
+      type: object
+      description: FOCUS 1.0 billing record (PascalCase field names per specification)
+      required:
+        - BillingPeriodStart
+        - BillingPeriodEnd
+        - ChargeCategory
+        - EffectiveCost
+        - InvoiceIssuerName
+        - ProviderName
+        - ServiceCategory
+        - ServiceName
+      properties:
+        BillingPeriodStart:
+          type: string
+          format: date-time
+          description: Start of the billing period (UTC)
+        BillingPeriodEnd:
+          type: string
+          format: date-time
+          description: End of the billing period (UTC)
+        ChargeCategory:
+          type: string
+          enum: [Usage, Purchase, Tax, Adjustment, Credit]
+          description: FOCUS charge category
+        ChargeClass:
+          type: string
+          enum: [Regular, Correction]
+          nullable: true
+        ChargeDescription:
+          type: string
+          nullable: true
+        ChargeFrequency:
+          type: string
+          enum: [One-Time, Recurring, Usage-Based]
+          nullable: true
+        ChargePeriodStart:
+          type: string
+          format: date-time
+          nullable: true
+        ChargePeriodEnd:
+          type: string
+          format: date-time
+          nullable: true
+        ConsumedQuantity:
+          type: number
+          format: double
+          nullable: true
+        ConsumedUnit:
+          type: string
+          nullable: true
+        ContractedCost:
+          type: number
+          format: double
+          nullable: true
+        ContractedUnitPrice:
+          type: number
+          format: double
+          nullable: true
+        EffectiveCost:
+          type: number
+          format: double
+          description: Effective cost in USD
+        InvoiceIssuerName:
+          type: string
+        ListCost:
+          type: number
+          format: double
+          nullable: true
+        ListUnitPrice:
+          type: number
+          format: double
+          nullable: true
+        PricingCategory:
+          type: string
+          enum: [On-Demand, Commitment-Based, Spot, Other]
+          nullable: true
+        PricingQuantity:
+          type: number
+          format: double
+          nullable: true
+        PricingUnit:
+          type: string
+          nullable: true
+        ProviderName:
+          type: string
+          description: Cloud provider name (e.g. "Amazon Web Services")
+        PublisherName:
+          type: string
+          nullable: true
+        RegionId:
+          type: string
+          nullable: true
+          description: Provider region code (e.g. "us-east-1")
+        RegionName:
+          type: string
+          nullable: true
+          description: Human-readable region name
+        ResourceId:
+          type: string
+          nullable: true
+        ResourceName:
+          type: string
+          nullable: true
+        ResourceType:
+          type: string
+          nullable: true
+        ServiceCategory:
+          type: string
+          description: High-level service category (e.g. "Compute", "Storage")
+        ServiceName:
+          type: string
+          description: Provider service name (e.g. "Amazon EC2")
+        SkuId:
+          type: string
+          nullable: true
+        SkuPriceId:
+          type: string
+          nullable: true
+        SubAccountId:
+          type: string
+          nullable: true
+          description: AWS account ID / Azure subscription ID / GCP project ID
+        SubAccountName:
+          type: string
+          nullable: true
+        Tags:
+          type: object
+          additionalProperties:
+            type: string
+          nullable: true
+          description: Resource tags as key-value pairs
+
+    # -------------------------------------------------------------------------
+    # CloudCarbon Enriched Record
+    # -------------------------------------------------------------------------
+
+    CloudCarbonRecord:
+      allOf:
+        - $ref: '#/components/schemas/FocusRecord'
+        - type: object
+          description: FOCUS 1.0 record with CloudCarbon GHG and water enrichment extensions
+          properties:
+            scope1_co2e_kg:
+              type: number
+              format: double
+              nullable: true
+              description: GHG Protocol Scope 1 emissions (kgCO2eq)
+            scope2_co2e_kg_location:
+              type: number
+              format: double
+              nullable: true
+              description: Scope 2 location-based emissions (kgCO2eq)
+            scope2_co2e_kg_market:
+              type: number
+              format: double
+              nullable: true
+              description: Scope 2 market-based emissions (kgCO2eq)
+            scope3_cat1_co2e_kg:
+              type: number
+              format: double
+              nullable: true
+              description: Scope 3 Cat 1 — purchased goods and services / hardware manufacturing
+            scope3_cat3_co2e_kg:
+              type: number
+              format: double
+              nullable: true
+              description: Scope 3 Cat 3 — fuel and energy related activities
+            scope3_cat12_co2e_kg:
+              type: number
+              format: double
+              nullable: true
+              description: Scope 3 Cat 12 — end-of-life treatment
+            scope3_total_co2e_kg:
+              type: number
+              format: double
+              nullable: true
+            scope3_confidence:
+              type: string
+              enum: [high, medium, low]
+              nullable: true
+            scope3_methodology_ref:
+              type: string
+              nullable: true
+              description: Reference to the methodology used (e.g. "boavizta-v2.3")
+            total_co2e_kg:
+              type: number
+              format: double
+              nullable: true
+              description: Total GHG emissions across all scopes (kgCO2eq)
+            carbon_intensity_gco2_kwh:
+              type: number
+              format: double
+              nullable: true
+              description: Grid carbon intensity used for calculation (gCO2eq/kWh)
+            estimated_kwh:
+              type: number
+              format: double
+              nullable: true
+              description: Estimated electricity consumption (kWh)
+            hardware_family:
+              type: string
+              nullable: true
+              description: Underlying hardware family (e.g. "Intel Xeon Ice Lake")
+            resource_share:
+              type: number
+              format: double
+              minimum: 0
+              maximum: 1
+              nullable: true
+              description: Fraction of physical host used by this resource (0.0–1.0)
+            water_litres:
+              type: number
+              format: double
+              nullable: true
+              description: Estimated water consumption (litres)
+            wue_litres_per_kwh:
+              type: number
+              format: double
+              nullable: true
+              description: Water Usage Effectiveness applied (litres/kWh)
+            water_stress_score:
+              type: number
+              format: double
+              nullable: true
+              description: WRI Aqueduct water stress score (0–5)
+            water_stress_adjusted_litres:
+              type: number
+              format: double
+              nullable: true
+              description: Water consumption adjusted for local water stress
+            water_data_source:
+              type: string
+              enum: [provider_disclosed, cooling_type_estimate]
+              nullable: true
+
+    # -------------------------------------------------------------------------
+    # Ingestion
+    # -------------------------------------------------------------------------
+
+    ValidationErrorDetail:
+      type: object
+      properties:
+        row:
+          type: integer
+          description: 1-indexed row number in the uploaded file
+        field:
+          type: string
+          nullable: true
+          description: FOCUS field name that failed validation
+        message:
+          type: string
+          description: Human-readable validation error message
+
+    IngestionResult:
+      type: object
+      required: [inserted, updated, total]
+      properties:
+        inserted:
+          type: integer
+          description: Number of new records inserted
+        updated:
+          type: integer
+          description: Number of existing records updated
+        skipped:
+          type: integer
+          description: Number of records skipped (e.g. duplicates)
+        total:
+          type: integer
+          description: Total records processed (inserted + updated)
+        errors:
+          type: array
+          items:
+            type: string
+          description: Non-fatal processing errors
+        validation_errors:
+          type: array
+          items:
+            $ref: '#/components/schemas/ValidationErrorDetail'
+          description: Per-row validation errors (only present for FOCUS passthrough uploads)
+
+    SyncJobResponse:
+      type: object
+      required: [status, account_id, job_id]
+      properties:
+        status:
+          type: string
+          example: sync_started
+        account_id:
+          type: string
+          format: uuid
+        job_id:
+          type: string
+          format: uuid
+
+    SyncJobStatus:
+      type: object
+      required: [job_id, status]
+      properties:
+        job_id:
+          type: string
+          format: uuid
+        account_id:
+          type: string
+          format: uuid
+          nullable: true
+        status:
+          type: string
+          enum: [pending, running, completed, failed]
+        started_at:
+          type: string
+          format: date-time
+          nullable: true
+        completed_at:
+          type: string
+          format: date-time
+          nullable: true
+        result:
+          $ref: '#/components/schemas/IngestionResult'
+          nullable: true
+        error:
+          type: string
+          nullable: true
+
+    # -------------------------------------------------------------------------
+    # Cloud Accounts
+    # -------------------------------------------------------------------------
+
+    CloudAccountCreate:
+      type: object
+      required: [name, provider, account_identifier]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 255
+          description: Human-readable account name
+        provider:
+          type: string
+          enum: [aws, azure, gcp, alibaba]
+        account_identifier:
+          type: string
+          description: Provider account ID (AWS account ID, Azure subscription ID, GCP project ID)
+        config:
+          type: object
+          additionalProperties: true
+          description: |
+            Provider-specific configuration:
+            - AWS: `s3_bucket`, `s3_prefix`, `report_name`, `aws_region`
+            - Azure: `subscription_id`, `resource_group`
+            - GCP: `project_id`, `dataset_id`, `table_id`
+            - Alibaba: `region_id`, `billing_cycle`
+        credentials:
+          type: object
+          additionalProperties:
+            type: string
+          description: |
+            Provider credentials (stored securely as credentials_ref, never returned):
+            - AWS: `aws_access_key_id`, `aws_secret_access_key`
+            - Azure: `azure_tenant_id`, `azure_client_id`, `azure_client_secret`
+            - GCP: `service_account_json`
+            - Alibaba: `access_key_id`, `access_key_secret`
+
+    CloudAccountResponse:
+      type: object
+      required: [id, tenant_id, name, provider, account_identifier, status, created_at, updated_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        tenant_id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        provider:
+          type: string
+          enum: [aws, azure, gcp, alibaba]
+        account_identifier:
+          type: string
+        status:
+          type: string
+          enum: [active, inactive, error, pending]
+        config:
+          type: object
+          additionalProperties: true
+        credentials_ref:
+          type: string
+          nullable: true
+          description: Opaque reference to stored credentials (never the raw credentials)
+        last_sync_at:
+          type: string
+          format: date-time
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        record_count:
+          type: integer
+          description: Number of FOCUS records associated with this account
+
+    CloudAccountListResponse:
+      type: object
+      required: [accounts, total]
+      properties:
+        accounts:
+          type: array
+          items:
+            $ref: '#/components/schemas/CloudAccountResponse'
+        total:
+          type: integer
+
+    # -------------------------------------------------------------------------
+    # Auth
+    # -------------------------------------------------------------------------
+
+    TokenRequest:
+      type: object
+      required: [grant_type]
+      properties:
+        grant_type:
+          type: string
+          enum: [password, refresh_token, authorization_code]
+        username:
+          type: string
+        password:
+          type: string
+          format: password
+        refresh_token:
+          type: string
+        code:
+          type: string
+          description: OAuth2 authorization code
+        provider:
+          type: string
+          enum: [google, azure_ad, okta]
+          description: OAuth2 provider (required for authorization_code grant)
+
+    TokenResponse:
+      type: object
+      required: [access_token, token_type, expires_in]
+      properties:
+        access_token:
+          type: string
+        token_type:
+          type: string
+          example: bearer
+        expires_in:
+          type: integer
+          description: Access token lifetime in seconds
+        refresh_token:
+          type: string
+          nullable: true
+
+    UserResponse:
+      type: object
+      required: [id, email, role]
+      properties:
+        id:
+          type: string
+          format: uuid
+        email:
+          type: string
+          format: email
+        name:
+          type: string
+          nullable: true
+        role:
+          type: string
+          enum: [viewer, analyst, engineer, admin]
+        tenant_id:
+          type: string
+          format: uuid
+
+    # -------------------------------------------------------------------------
+    # Enrichment
+    # -------------------------------------------------------------------------
+
+    EnrichmentRunRequest:
+      type: object
+      required: [tenant_id]
+      properties:
+        tenant_id:
+          type: string
+          format: uuid
+          description: Tenant UUID to enrich records for
+        mode:
+          type: string
+          enum: [incremental, full]
+          default: incremental
+          description: |
+            incremental: only enrich records without an existing enriched_record.
+            full: re-enrich all records (use when methodology is updated).
+        enrichment_version:
+          type: string
+          nullable: true
+          maxLength: 20
+          description: Version string to stamp on re-enriched records (full mode only)
+        limit:
+          type: integer
+          nullable: true
+          minimum: 1
+          maximum: 100000
+          description: Maximum records to process (incremental mode only; default 1000)
+
+    EnrichmentRunResponse:
+      type: object
+      required: [job_id, tenant_id, mode, status, queued_at]
+      properties:
+        job_id:
+          type: string
+          description: Job ID for status polling
+        tenant_id:
+          type: string
+          format: uuid
+        mode:
+          type: string
+          enum: [incremental, full]
+        status:
+          type: string
+          example: queued
+        queued_at:
+          type: string
+          format: date-time
+
+    EnrichmentStatusResponse:
+      type: object
+      required: [job_id, status]
+      properties:
+        job_id:
+          type: string
+        status:
+          type: string
+          enum: [queued, running, completed, failed]
+        processed:
+          type: integer
+          default: 0
+        total:
+          type: integer
+          default: 0
+        pct:
+          type: number
+          format: double
+          minimum: 0
+          maximum: 100
+        failed:
+          type: integer
+          default: 0
+        errors:
+          type: array
+          items:
+            type: string
+        started_at:
+          type: string
+          format: date-time
+          nullable: true
+        completed_at:
+          type: string
+          format: date-time
+          nullable: true
+        duration_seconds:
+          type: number
+          format: double
+          nullable: true
+
+    EnrichmentSummaryResponse:
+      type: object
+      required:
+        - tenant_id
+        - total_records_enriched
+        - total_focus_records
+        - coverage_pct
+        - total_co2e_kg
+        - total_scope3_co2e_kg
+        - scope3_pct_of_total
+        - total_water_litres
+      properties:
+        tenant_id:
+          type: string
+          format: uuid
+        total_records_enriched:
+          type: integer
+          description: Number of FOCUS records with enrichment data
+        total_focus_records:
+          type: integer
+          description: Total FOCUS records for the tenant
+        coverage_pct:
+          type: number
+          format: double
+          description: Percentage of FOCUS records with enrichment (0–100)
+        total_co2e_kg:
+          type: number
+          format: double
+          description: Total carbon across all scopes (kg CO2e)
+        total_scope3_co2e_kg:
+          type: number
+          format: double
+          description: Total Scope 3 carbon (kg CO2e)
+        scope3_pct_of_total:
+          type: number
+          format: double
+          description: Scope 3 as percentage of total carbon
+        total_water_litres:
+          type: number
+          format: double
+          description: Total water consumption (litres)
+        last_enriched_at:
+          type: string
+          format: date-time
+          nullable: true
+        enrichment_version:
+          type: string
+          nullable: true
+
+    EnrichedRecord:
+      type: object
+      description: Carbon and water enrichment for a single FOCUS billing record
+      required:
+        - id
+        - focus_record_id
+        - tenant_id
+        - total_co2e_kg
+        - enriched_at
+      properties:
+        id:
+          type: string
+          format: uuid
+        focus_record_id:
+          type: string
+          format: uuid
+        tenant_id:
+          type: string
+          format: uuid
+        scope1_co2e_kg:
+          type: number
+          format: double
+          description: Scope 1 direct emissions (always 0 for cloud customers)
+        scope2_co2e_kg_location:
+          type: number
+          format: double
+          description: Scope 2 location-based electricity emissions (kg CO2e)
+        scope2_co2e_kg_market:
+          type: number
+          format: double
+          description: Scope 2 market-based electricity emissions (kg CO2e)
+        scope3_cat1_co2e_kg:
+          type: number
+          format: double
+          description: Scope 3 Cat1 — embodied carbon in hardware (kg CO2e)
+        scope3_cat3_co2e_kg:
+          type: number
+          format: double
+          description: Scope 3 Cat3 — upstream fuel and energy activities (kg CO2e)
+        scope3_cat12_co2e_kg:
+          type: number
+          format: double
+          description: Scope 3 Cat12 — end-of-life treatment of hardware (kg CO2e)
+        scope3_total_co2e_kg:
+          type: number
+          format: double
+          description: Total Scope 3 (Cat1 + Cat3 + Cat12) in kg CO2e
+        scope3_confidence:
+          type: string
+          enum: [high, medium, low]
+          description: Confidence level of the Scope 3 estimate
+        scope3_methodology_ref:
+          type: string
+          description: Methodology version reference string
+        total_co2e_kg:
+          type: number
+          format: double
+          description: Total carbon (Scope 1 + Scope 2 location + Scope 3) in kg CO2e
+        carbon_intensity_gco2_kwh:
+          type: number
+          format: double
+          description: Carbon intensity used for estimation (gCO2eq/kWh)
+        estimated_kwh:
+          type: number
+          format: double
+          description: Estimated energy consumption (kWh)
+        hardware_family:
+          type: string
+          nullable: true
+          description: Hardware family used for Scope 3 Cat1 estimation
+        resource_share:
+          type: number
+          format: double
+          nullable: true
+          description: Fraction of the physical host attributed to this record
+        water_litres:
+          type: number
+          format: double
+          description: Estimated water consumption (litres)
+        wue_litres_per_kwh:
+          type: number
+          format: double
+          description: Water Usage Effectiveness coefficient used (L/kWh)
+        water_stress_score:
+          type: number
+          format: double
+          nullable: true
+          description: WRI Aqueduct water stress score (0–5)
+        water_stress_adjusted_litres:
+          type: number
+          format: double
+          description: Water consumption adjusted for regional water stress (litres)
+        water_data_source:
+          type: string
+          description: Source of WUE data
+        enriched_at:
+          type: string
+          format: date-time
+        enrichment_version:
+          type: string
+
+    # -------------------------------------------------------------------------
+    # Session 4 Schemas — Recommendations, Reports, Forecast, NL Query
+    # -------------------------------------------------------------------------
+
+    RecommendationResponse:
+      type: object
+      description: A single actionable GreenOps recommendation
+      required:
+        - id
+        - tenant_id
+        - type
+        - resource_id
+        - provider
+        - region
+        - service_name
+        - cost_impact_monthly_usd
+        - co2e_impact_monthly_kg
+        - water_impact_monthly_litres
+        - impact_score
+        - complexity
+        - status
+      properties:
+        id:
+          type: string
+          format: uuid
+        tenant_id:
+          type: string
+          format: uuid
+        type:
+          type: string
+          description: |
+            Recommendation type. One of: rightsize, terminate_idle,
+            schedule_off_hours, reserved_instance, region_migrate_carbon,
+            green_region_shift
+        resource_id:
+          type: string
+        provider:
+          type: string
+        region:
+          type: string
+        service_name:
+          type: string
+        cost_impact_monthly_usd:
+          type: number
+          format: double
+          description: Estimated monthly cost saving (USD)
+        co2e_impact_monthly_kg:
+          type: number
+          format: double
+          description: Estimated monthly carbon reduction (kg CO2e)
+        water_impact_monthly_litres:
+          type: number
+          format: double
+          description: Estimated monthly water reduction (litres)
+        impact_score:
+          type: number
+          format: double
+          minimum: 0
+          maximum: 1
+          description: Composite weighted impact score (0–1)
+        cost_weight_used:
+          type: number
+          format: double
+        carbon_weight_used:
+          type: number
+          format: double
+        water_weight_used:
+          type: number
+          format: double
+        complexity:
+          type: string
+          enum: [low, medium, high]
+        implementation_steps:
+          type: array
+          items:
+            type: string
+        methodology_notes:
+          type: string
+        policy_blocked:
+          type: boolean
+          description: True if a governance policy rule blocked this recommendation
+        policy_block_reason:
+          type: string
+          nullable: true
+        requires_approval:
+          type: boolean
+        status:
+          type: string
+          enum: [open, implemented, dismissed, snoozed]
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    RecommendationListResponse:
+      type: object
+      required: [items, total, page, page_size]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/RecommendationResponse"
+        total:
+          type: integer
+        page:
+          type: integer
+        page_size:
+          type: integer
+
+    RecommendationRunRequest:
+      type: object
+      required: [cost_weight, carbon_weight, water_weight]
+      properties:
+        cost_weight:
+          type: number
+          format: double
+          minimum: 0
+          maximum: 1
+          default: 0.6
+        carbon_weight:
+          type: number
+          format: double
+          minimum: 0
+          maximum: 1
+          default: 0.3
+        water_weight:
+          type: number
+          format: double
+          minimum: 0
+          maximum: 1
+          default: 0.1
+
+    RecommendationRunResponse:
+      type: object
+      required: [job_id, tenant_id, status, queued_at]
+      properties:
+        job_id:
+          type: string
+          format: uuid
+        tenant_id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          example: queued
+        queued_at:
+          type: string
+          format: date-time
+
+    RecommendationPatchRequest:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [implemented, dismissed, snoozed, open]
+        snooze_until:
+          type: string
+          format: date-time
+          nullable: true
+
+    RecommendationSummaryResponse:
+      type: object
+      properties:
+        open_count:
+          type: integer
+        total_cost_opportunity_usd:
+          type: number
+          format: double
+        total_co2e_opportunity_kg:
+          type: number
+          format: double
+        total_water_opportunity_litres:
+          type: number
+          format: double
+        by_type:
+          type: array
+          items:
+            type: object
+            properties:
+              type:
+                type: string
+              count:
+                type: integer
+              cost_usd:
+                type: number
+              co2e_kg:
+                type: number
+        by_provider:
+          type: array
+          items:
+            type: object
+            properties:
+              provider:
+                type: string
+              count:
+                type: integer
+              cost_usd:
+                type: number
+              co2e_kg:
+                type: number
+
+    OverviewReportResponse:
+      type: object
+      properties:
+        period:
+          type: object
+          properties:
+            start:
+              type: string
+              format: date
+            end:
+              type: string
+              format: date
+        total_cost_usd:
+          type: number
+          format: double
+        total_co2e_kg:
+          type: number
+          format: double
+        scope3_co2e_kg:
+          type: number
+          format: double
+        scope3_pct:
+          type: number
+          format: double
+        total_water_litres:
+          type: number
+          format: double
+        water_stress_adjusted_litres:
+          type: number
+          format: double
+        carbon_efficiency:
+          type: number
+          format: double
+          description: kg CO2e per $1000 spend
+        cost_mom_pct:
+          type: number
+          format: double
+          description: Month-over-month cost change (%)
+        co2e_mom_pct:
+          type: number
+          format: double
+          description: Month-over-month carbon change (%)
+        water_mom_pct:
+          type: number
+          format: double
+          description: Month-over-month water change (%)
+        by_provider:
+          type: array
+          items:
+            type: object
+        by_service_category:
+          type: array
+          items:
+            type: object
+        top_resources_by_co2e:
+          type: array
+          items:
+            type: object
+
+    CarbonReportResponse:
+      type: object
+      properties:
+        period:
+          type: object
+          properties:
+            start:
+              type: string
+              format: date
+            end:
+              type: string
+              format: date
+            granularity:
+              type: string
+              enum: [daily, weekly, monthly]
+        time_series:
+          type: array
+          items:
+            type: object
+            properties:
+              date:
+                type: string
+                format: date
+              scope1:
+                type: number
+              scope2_location:
+                type: number
+              scope2_market:
+                type: number
+              scope3_total:
+                type: number
+              total:
+                type: number
+        by_region:
+          type: array
+          items:
+            type: object
+        scope3_breakdown:
+          type: object
+          properties:
+            cat1_embodied:
+              type: number
+            cat3_upstream:
+              type: number
+            cat12_eol:
+              type: number
+            total:
+              type: number
+            confidence_distribution:
+              type: object
+
+    WaterReportResponse:
+      type: object
+      properties:
+        period:
+          type: object
+        total_water_litres:
+          type: number
+          format: double
+        total_water_stress_adjusted_litres:
+          type: number
+          format: double
+        by_region:
+          type: array
+          items:
+            type: object
+        by_service_category:
+          type: array
+          items:
+            type: object
+        high_stress_regions:
+          type: array
+          items:
+            type: object
+
+    ForecastResponse:
+      type: object
+      additionalProperties:
+        type: object
+        description: ForecastResult keyed by metric name
+        properties:
+          metric:
+            type: string
+          dates:
+            type: array
+            items:
+              type: string
+              format: date
+          predicted:
+            type: array
+            items:
+              type: number
+          lower_80:
+            type: array
+            items:
+              type: number
+          upper_80:
+            type: array
+            items:
+              type: number
+          model_mae:
+            type: number
+            format: double
+          data_points_used:
+            type: integer
+          generated_at:
+            type: string
+            format: date-time
+
+    NLQueryRequest:
+      type: object
+      required: [question]
+      properties:
+        question:
+          type: string
+          minLength: 5
+          maxLength: 1000
+          example: "Which AWS regions have the highest carbon intensity this month?"
+
+    NLQueryResponse:
+      type: object
+      required: [question, supported, row_count, suggestions]
+      properties:
+        question:
+          type: string
+        sql:
+          type: string
+          nullable: true
+          description: Generated SQL query
+        results:
+          type: array
+          nullable: true
+          items:
+            type: object
+          description: Query result rows
+        row_count:
+          type: integer
+        suggestions:
+          type: array
+          items:
+            type: string
+          description: 3 follow-up question suggestions
+        supported:
+          type: boolean
+          description: False if the question cannot be answered with available data
+        error:
+          type: string
+          nullable: true
+
+    # -------------------------------------------------------------------------
+    # Agent Schemas (Session 5)
+    # -------------------------------------------------------------------------
+
+    AgentConfigResponse:
+      type: object
+      required: [agent_type, enabled, dry_run, schedule_cron, last_run_at, last_run_status]
+      properties:
+        id:
+          type: string
+          format: uuid
+        agent_type:
+          type: string
+          enum:
+            - anomaly_detector
+            - carbon_spike_monitor
+            - rightsizing_agent
+            - idle_reaper
+            - green_scheduler
+        enabled:
+          type: boolean
+        dry_run:
+          type: boolean
+          description: When true, agent analyses and notifies but does not take infrastructure actions
+        schedule_cron:
+          type: string
+          nullable: true
+          description: Cron expression for scheduled runs (e.g. "0 0 * * *")
+        config:
+          type: object
+          additionalProperties: true
+          description: Agent-specific configuration parameters
+        last_run_at:
+          type: string
+          format: date-time
+          nullable: true
+        last_run_status:
+          type: string
+          enum: [running, completed, failed]
+          nullable: true
+        last_run_findings:
+          type: integer
+          nullable: true
+
+    AgentConfigPatchRequest:
+      type: object
+      properties:
+        enabled:
+          type: boolean
+        dry_run:
+          type: boolean
+        schedule_cron:
+          type: string
+          nullable: true
+        config:
+          type: object
+          additionalProperties: true
+
+    ManualRunRequest:
+      type: object
+      properties:
+        dry_run:
+          type: boolean
+          default: true
+          description: When true, agent will not take infrastructure actions
+        config_override:
+          type: object
+          additionalProperties: true
+          description: Optional per-run config overrides
+
+    ManualRunResponse:
+      type: object
+      required: [run_id, agent_type, status, dry_run, started_at]
+      properties:
+        run_id:
+          type: string
+          format: uuid
+        agent_type:
+          type: string
+        status:
+          type: string
+          enum: [running]
+        dry_run:
+          type: boolean
+        started_at:
+          type: string
+          format: date-time
+
+    AgentRunResponse:
+      type: object
+      required: [id, agent_type, status, dry_run, started_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        agent_type:
+          type: string
+        status:
+          type: string
+          enum: [running, completed, failed]
+        dry_run:
+          type: boolean
+        started_at:
+          type: string
+          format: date-time
+        completed_at:
+          type: string
+          format: date-time
+          nullable: true
+        duration_seconds:
+          type: number
+          nullable: true
+        findings_count:
+          type: integer
+          nullable: true
+        actions_taken:
+          type: integer
+          nullable: true
+        actions_pending_approval:
+          type: integer
+          nullable: true
+        error_message:
+          type: string
+          nullable: true
+        findings:
+          type: array
+          items:
+            type: object
+          description: List of findings (anomalies, recommendations, etc.)
+        actions:
+          type: array
+          items:
+            type: object
+          description: List of actions taken or proposed
+
+    AgentRunListResponse:
+      type: object
+      required: [items, total, limit, offset]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/AgentRunResponse"
+        total:
+          type: integer
+        limit:
+          type: integer
+        offset:
+          type: integer
+
+    ApproveActionRequest:
+      type: object
+      required: [action_id]
+      properties:
+        action_id:
+          type: string
+          format: uuid
+        notes:
+          type: string
+          nullable: true
+
+    ApproveActionResponse:
+      type: object
+      required: [action_id, status, approved_by, approved_at]
+      properties:
+        action_id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [executing, completed, failed]
+        approved_by:
+          type: string
+        approved_at:
+          type: string
+          format: date-time
+        result:
+          type: object
+          nullable: true
+
+    # -------------------------------------------------------------------------
+    # Error
+    # -------------------------------------------------------------------------
+
+    ErrorResponse:
+      type: object
+      required: [detail]
+      properties:
+        detail:
+          oneOf:
+            - type: string
+            - type: array
+              items:
+                type: object
+
+# =============================================================================
+# Paths
+# =============================================================================
+
+paths:
+
+  # ---------------------------------------------------------------------------
+  # Health
+  # ---------------------------------------------------------------------------
+
+  /health:
+    get:
+      tags: [Health]
+      summary: Health check
+      description: Returns service status. No authentication required.
+      security: []
+      operationId: healthCheck
+      responses:
+        "200":
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: ok
+                  version:
+                    type: string
+                    example: "0.2.0"
+
+  # ---------------------------------------------------------------------------
+  # Authentication
+  # ---------------------------------------------------------------------------
+
+  /auth/token:
+    post:
+      tags: [Authentication]
+      summary: Obtain access token
+      description: |
+        Exchange credentials for a JWT access token and refresh token.
+        Supports password grant (email/password), refresh_token grant, and
+        OAuth2 authorization_code grant (Google, Azure AD, Okta).
+      security: []
+      operationId: getToken
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TokenRequest'
+      responses:
+        "200":
+          description: Token issued successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenResponse'
+        "401":
+          description: Invalid credentials
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /auth/refresh:
+    post:
+      tags: [Authentication]
+      summary: Refresh access token
+      description: Exchange a valid refresh token for a new access token.
+      security: []
+      operationId: refreshToken
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [refresh_token]
+              properties:
+                refresh_token:
+                  type: string
+      responses:
+        "200":
+          description: New access token issued
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenResponse'
+        "401":
+          description: Invalid or expired refresh token
+
+  /auth/logout:
+    post:
+      tags: [Authentication]
+      summary: Revoke tokens
+      description: Revoke the current access token and refresh token (adds JTI to Redis denylist).
+      operationId: logout
+      responses:
+        "204":
+          description: Tokens revoked
+
+  /auth/me:
+    get:
+      tags: [Authentication]
+      summary: Get current user
+      description: Return the authenticated user's profile and role.
+      operationId: getCurrentUser
+      responses:
+        "200":
+          description: Current user profile
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserResponse'
+        "401":
+          description: Not authenticated
+
+  # ---------------------------------------------------------------------------
+  # Cloud Accounts
+  # ---------------------------------------------------------------------------
+
+  /accounts:
+    get:
+      tags: [Accounts]
+      summary: List cloud accounts
+      description: |
+        Return all active cloud accounts for the current tenant.
+        Includes `last_sync_at` timestamp and `record_count` for each account.
+        Requires `viewer` role or higher.
+      operationId: listAccounts
+      responses:
+        "200":
+          description: List of cloud accounts
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CloudAccountListResponse'
+        "401":
+          description: Not authenticated
+
+    post:
+      tags: [Accounts]
+      summary: Create a cloud account connection
+      description: |
+        Create a new cloud account connection.
+        Validates credentials by making a test API call to the provider before saving.
+        Raw credentials are never stored; only a `credentials_ref` is kept.
+        Requires `admin` role.
+      operationId: createAccount
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CloudAccountCreate'
+            examples:
+              aws:
+                summary: AWS account with S3 CUR
+                value:
+                  name: "Production AWS"
+                  provider: aws
+                  account_identifier: "123456789012"
+                  config:
+                    s3_bucket: "my-cur-bucket"
+                    s3_prefix: "cur/reports"
+                    report_name: "cloudcarbon-cur"
+                    aws_region: "us-east-1"
+                  credentials:
+                    aws_access_key_id: "AKIAIOSFODNN7EXAMPLE"
+                    aws_secret_access_key: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
+              azure:
+                summary: Azure subscription
+                value:
+                  name: "Production Azure"
+                  provider: azure
+                  account_identifier: "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+                  config:
+                    subscription_id: "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+                  credentials:
+                    azure_tenant_id: "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+                    azure_client_id: "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+                    azure_client_secret: "your-client-secret"
+      responses:
+        "201":
+          description: Cloud account created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CloudAccountResponse'
+        "401":
+          description: Not authenticated
+        "403":
+          description: Insufficient role (requires admin)
+        "422":
+          description: Credential validation failed or invalid request body
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /accounts/{account_id}:
+    delete:
+      tags: [Accounts]
+      summary: Delete a cloud account
+      description: |
+        Soft-delete a cloud account (sets `status = 'inactive'`).
+        Writes an audit log entry.
+        Requires `admin` role.
+      operationId: deleteAccount
+      parameters:
+        - $ref: '#/components/parameters/AccountIdPath'
+      responses:
+        "204":
+          description: Account deleted
+        "401":
+          description: Not authenticated
+        "403":
+          description: Insufficient role (requires admin)
+        "404":
+          description: Account not found
+
+  # ---------------------------------------------------------------------------
+  # Ingestion
+  # ---------------------------------------------------------------------------
+
+  /ingest/upload:
+    post:
+      tags: [Ingestion]
+      summary: Upload a billing file
+      description: |
+        Upload a billing file for ingestion. Supported formats:
+        - **AWS CUR** (CSV, optionally gzip-compressed) — auto-detected from filename
+        - **Azure Cost Management** export (CSV)
+        - **GCP BigQuery** billing export (JSON)
+        - **FOCUS 1.0** (CSV or Parquet) — validated against the FOCUS schema
+
+        If the file contains validation errors, they are returned without ingesting any records.
+        Requires `analyst` role or higher.
+      operationId: uploadBillingFile
+      parameters:
+        - name: account_id
+          in: query
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: Cloud account UUID to associate records with
+        - name: provider
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [aws, azure, gcp, alibaba]
+          description: Provider hint. Auto-detected from filename if not provided.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: Billing file (CSV, Parquet, or JSON)
+      responses:
+        "200":
+          description: Ingestion result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IngestionResult'
+              examples:
+                success:
+                  summary: Successful ingestion
+                  value:
+                    inserted: 1250
+                    updated: 48
+                    skipped: 0
+                    total: 1298
+                    errors: []
+                    validation_errors: []
+                validation_errors:
+                  summary: FOCUS validation errors
+                  value:
+                    inserted: 0
+                    updated: 0
+                    skipped: 0
+                    total: 0
+                    errors: ["3 validation error(s) found; no records ingested."]
+                    validation_errors:
+                      - row: 5
+                        field: "EffectiveCost"
+                        message: "Input should be a valid number"
+                      - row: 12
+                        field: "BillingPeriodStart"
+                        message: "Input should be a valid datetime"
+        "401":
+          description: Not authenticated
+        "403":
+          description: Insufficient role (requires analyst or higher)
+        "404":
+          description: Cloud account not found
+
+  /ingest/sync/{account_id}:
+    post:
+      tags: [Ingestion]
+      summary: Trigger async account sync
+      description: |
+        Start a background sync job for the specified cloud account.
+        The sync fetches billing data directly from the provider API and ingests it.
+        Returns a `job_id` immediately; poll `/ingest/sync/{job_id}/status` for progress.
+        Requires `engineer` or `admin` role.
+      operationId: triggerSync
+      parameters:
+        - $ref: '#/components/parameters/AccountIdPath'
+      responses:
+        "202":
+          description: Sync job started
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SyncJobResponse'
+              example:
+                status: sync_started
+                account_id: "550e8400-e29b-41d4-a716-446655440000"
+                job_id: "7c9e6679-7425-40de-944b-e07fc1f90ae7"
+        "401":
+          description: Not authenticated
+        "403":
+          description: Insufficient role (requires engineer or admin)
+        "404":
+          description: Cloud account not found
+
+  /ingest/sync/{job_id}/status:
+    get:
+      tags: [Ingestion]
+      summary: Get sync job status
+      description: |
+        Poll the status of an async sync job.
+        Job status is stored in Redis with a 24-hour TTL.
+      operationId: getSyncStatus
+      parameters:
+        - $ref: '#/components/parameters/JobIdPath'
+      responses:
+        "200":
+          description: Sync job status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SyncJobStatus'
+              examples:
+                running:
+                  summary: Job in progress
+                  value:
+                    job_id: "7c9e6679-7425-40de-944b-e07fc1f90ae7"
+                    account_id: "550e8400-e29b-41d4-a716-446655440000"
+                    status: running
+                    started_at: "2026-04-01T10:00:00Z"
+                    completed_at: null
+                    result: null
+                    error: null
+                completed:
+                  summary: Job completed
+                  value:
+                    job_id: "7c9e6679-7425-40de-944b-e07fc1f90ae7"
+                    account_id: "550e8400-e29b-41d4-a716-446655440000"
+                    status: completed
+                    started_at: "2026-04-01T10:00:00Z"
+                    completed_at: "2026-04-01T10:02:34Z"
+                    result:
+                      inserted: 8420
+                      updated: 312
+                      skipped: 0
+                      total: 8732
+                      errors: []
+                      validation_errors: []
+                    error: null
+        "401":
+          description: Not authenticated
+        "404":
+          description: Job not found or expired
+
+  # ---------------------------------------------------------------------------
+  # Records (Session 3 will fully implement)
+  # ---------------------------------------------------------------------------
+
+  /records:
+    get:
+      tags: [Records]
+      summary: Query FOCUS records
+      description: |
+        Query normalised FOCUS 1.0 billing records for the current tenant.
+        Supports filtering by provider, region, service, date range, and tags.
+        Full implementation in Session 3.
+      operationId: listRecords
+      parameters:
+        - $ref: '#/components/parameters/PageParam'
+        - $ref: '#/components/parameters/PageSizeParam'
+        - name: provider
+          in: query
+          schema:
+            type: string
+            enum: [aws, azure, gcp, alibaba]
+        - name: region_id
+          in: query
+          schema:
+            type: string
+        - name: service_name
+          in: query
+          schema:
+            type: string
+        - name: start_date
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: end_date
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: account_id
+          in: query
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Paginated FOCUS records
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  records:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/FocusRecord'
+                  total:
+                    type: integer
+                  page:
+                    type: integer
+                  page_size:
+                    type: integer
+        "401":
+          description: Not authenticated
+
+  # ---------------------------------------------------------------------------
+  # Enrichment (Session 3)
+  # ---------------------------------------------------------------------------
+
+  /records/{id}/enrichment:
+    get:
+      tags: [Enrichment]
+      summary: Get enrichment for a FOCUS record
+      description: Return GHG and water enrichment data for a specific FOCUS record. Implemented in Session 3.
+      operationId: getRecordEnrichment
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Enriched record
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CloudCarbonRecord'
+        "404":
+          description: Record not found
+
+  # ---------------------------------------------------------------------------
+  # Enrichment (Session 3)
+  # ---------------------------------------------------------------------------
+
+  /enrichment/run:
+    post:
+      tags: [Enrichment]
+      summary: Start enrichment job
+      description: |
+        Trigger carbon and water enrichment for a tenant's FOCUS records.
+        Runs as a background task; poll `/enrichment/status/{job_id}` for progress.
+
+        **Modes:**
+        - `incremental` (default): only enrich records without an existing enriched_record.
+        - `full`: re-enrich all records (use after methodology updates).
+
+        **Required role:** `engineer` or above.
+      operationId: runEnrichment
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EnrichmentRunRequest'
+            examples:
+              incremental:
+                summary: Incremental enrichment (default)
+                value:
+                  tenant_id: "3fa85f64-5717-4562-b3fc-2c963f66afa6"
+                  mode: incremental
+                  limit: 1000
+              full_re_enrich:
+                summary: Full re-enrichment with new methodology version
+                value:
+                  tenant_id: "3fa85f64-5717-4562-b3fc-2c963f66afa6"
+                  mode: full
+                  enrichment_version: "1.1.0"
+      responses:
+        "202":
+          description: Enrichment job queued successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EnrichmentRunResponse'
+              example:
+                job_id: "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+                tenant_id: "3fa85f64-5717-4562-b3fc-2c963f66afa6"
+                mode: incremental
+                status: queued
+                queued_at: "2026-04-01T12:00:00Z"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "403":
+          description: Insufficient role (requires engineer or above)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "422":
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /enrichment/status/{job_id}:
+    get:
+      tags: [Enrichment]
+      summary: Get enrichment job status
+      description: |
+        Poll the progress of an enrichment job by job_id.
+        Job state is stored in Redis with a 24-hour TTL.
+      operationId: getEnrichmentStatus
+      parameters:
+        - name: job_id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Job ID returned by POST /enrichment/run
+      responses:
+        "200":
+          description: Job status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EnrichmentStatusResponse'
+              examples:
+                running:
+                  summary: Job in progress
+                  value:
+                    job_id: "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+                    status: running
+                    processed: 342
+                    total: 1000
+                    pct: 34.2
+                    failed: 0
+                    errors: []
+                    started_at: "2026-04-01T12:00:05Z"
+                    completed_at: null
+                    duration_seconds: null
+                completed:
+                  summary: Job completed
+                  value:
+                    job_id: "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+                    status: completed
+                    processed: 1000
+                    total: 1000
+                    pct: 100.0
+                    failed: 0
+                    errors: []
+                    started_at: "2026-04-01T12:00:05Z"
+                    completed_at: "2026-04-01T12:02:37Z"
+                    duration_seconds: 152.3
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: Job not found or expired (24h TTL)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "503":
+          description: Redis unavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /enrichment/summary:
+    get:
+      tags: [Enrichment]
+      summary: Get enrichment summary
+      description: |
+        Return aggregated carbon and water statistics for the current tenant.
+        Includes total CO2e, Scope 3 breakdown, water consumption, and coverage percentage.
+
+        **Required role:** `viewer` or above.
+      operationId: getEnrichmentSummary
+      parameters:
+        - name: tenant_id
+          in: query
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: Tenant UUID
+      responses:
+        "200":
+          description: Enrichment summary statistics
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EnrichmentSummaryResponse'
+              example:
+                tenant_id: "3fa85f64-5717-4562-b3fc-2c963f66afa6"
+                total_records_enriched: 48230
+                total_focus_records: 50000
+                coverage_pct: 96.46
+                total_co2e_kg: 12847.32
+                total_scope3_co2e_kg: 8921.44
+                scope3_pct_of_total: 69.44
+                total_water_litres: 23104.8
+                last_enriched_at: "2026-04-01T11:58:22Z"
+                enrichment_version: "1.0.0"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "422":
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  # ---------------------------------------------------------------------------
+  # Recommendations (Session 4)
+  # ---------------------------------------------------------------------------
+
+  /recommendations:
+    get:
+      tags: [Recommendations]
+      summary: List GreenOps recommendations
+      description: Return active GreenOps optimisation recommendations. Implemented in Session 4.
+      operationId: listRecommendations
+      responses:
+        "200":
+          description: List of recommendations
+
+  # ---------------------------------------------------------------------------
+  # Agents (Session 4)
+  # ---------------------------------------------------------------------------
+
+  /agents/runs:
+    get:
+      tags: [Agents]
+      summary: List agent runs
+      description: Return autonomous agent execution history. Implemented in Session 4.
+      operationId: listAgentRuns
+      responses:
+        "200":
+          description: List of agent runs
+
+  /agents/runs/{id}:
+    get:
+      tags: [Agents]
+      summary: Get agent run details
+      description: Return details for a specific agent run including reasoning trace. Implemented in Session 4.
+      operationId: getAgentRun
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Agent run details
+
+  # ---------------------------------------------------------------------------
+  # Recommendations (Session 4)
+  # ---------------------------------------------------------------------------
+
+  /recommendations:
+    get:
+      tags: [Recommendations]
+      summary: List recommendations
+      description: |
+        List actionable GreenOps recommendations with optional filters and sorting.
+        Use `mode=sustainability` to sort by carbon impact instead of cost.
+      operationId: listRecommendations
+      security:
+        - BearerAuth: []
+        - ApiKeyAuth: []
+      parameters:
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [open, implemented, dismissed, snoozed]
+        - name: type
+          in: query
+          schema:
+            type: string
+        - name: provider
+          in: query
+          schema:
+            type: string
+        - name: region
+          in: query
+          schema:
+            type: string
+        - name: min_cost_impact
+          in: query
+          schema:
+            type: number
+            minimum: 0
+        - name: min_co2e_impact
+          in: query
+          schema:
+            type: number
+            minimum: 0
+        - name: sort_by
+          in: query
+          schema:
+            type: string
+            enum: [impact_score, cost, co2e, water]
+            default: impact_score
+        - name: mode
+          in: query
+          schema:
+            type: string
+            enum: [cost, sustainability]
+            default: cost
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 500
+            default: 50
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+      responses:
+        "200":
+          description: Paginated list of recommendations
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RecommendationListResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /recommendations/run:
+    post:
+      tags: [Recommendations]
+      summary: Run recommendation engine
+      description: |
+        Trigger the recommendation engine for the current tenant as a background task.
+        Weights must sum to 1.0. Returns a job ID immediately (HTTP 202).
+      operationId: runRecommendations
+      security:
+        - BearerAuth: []
+        - ApiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RecommendationRunRequest"
+            example:
+              cost_weight: 0.6
+              carbon_weight: 0.3
+              water_weight: 0.1
+      responses:
+        "202":
+          description: Recommendation job queued
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RecommendationRunResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+
+  /recommendations/summary:
+    get:
+      tags: [Recommendations]
+      summary: Recommendation opportunity summary
+      description: Return aggregated cost, carbon, and water opportunity statistics.
+      operationId: recommendationsSummary
+      security:
+        - BearerAuth: []
+        - ApiKeyAuth: []
+      responses:
+        "200":
+          description: Aggregated recommendation statistics
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RecommendationSummaryResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /recommendations/{recommendation_id}:
+    patch:
+      tags: [Recommendations]
+      summary: Update recommendation status
+      description: Update the status of a recommendation (implement, dismiss, snooze).
+      operationId: updateRecommendation
+      security:
+        - BearerAuth: []
+        - ApiKeyAuth: []
+      parameters:
+        - name: recommendation_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RecommendationPatchRequest"
+      responses:
+        "200":
+          description: Updated recommendation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RecommendationResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  # ---------------------------------------------------------------------------
+  # Reports — Overview, Carbon, Water, Forecast (Session 4)
+  # ---------------------------------------------------------------------------
+
+  /reports/overview:
+    get:
+      tags: [Reports]
+      summary: Multi-dimensional overview report
+      description: |
+        Return cost, carbon, and water totals with month-over-month changes,
+        provider breakdown, service category breakdown, and top 10 resources by CO2e.
+      operationId: overviewReport
+      security:
+        - BearerAuth: []
+        - ApiKeyAuth: []
+      parameters:
+        - name: start_date
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: end_date
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: provider
+          in: query
+          schema:
+            type: string
+        - name: mode
+          in: query
+          schema:
+            type: string
+            enum: [cost, sustainability]
+            default: cost
+      responses:
+        "200":
+          description: Overview report
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OverviewReportResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /reports/carbon:
+    get:
+      tags: [Reports]
+      summary: GHG Protocol carbon report
+      description: |
+        Return a GHG Protocol-aligned carbon report with time series (Scope 2 + Scope 3),
+        regional breakdown, and Scope 3 category detail with confidence distribution.
+      operationId: carbonReport
+      security:
+        - BearerAuth: []
+        - ApiKeyAuth: []
+      parameters:
+        - name: start_date
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: end_date
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: provider
+          in: query
+          schema:
+            type: string
+        - name: granularity
+          in: query
+          schema:
+            type: string
+            enum: [daily, weekly, monthly]
+            default: daily
+      responses:
+        "200":
+          description: Carbon report
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CarbonReportResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /reports/water:
+    get:
+      tags: [Reports]
+      summary: Water consumption report
+      description: |
+        Return water consumption with regional breakdown (WRI Aqueduct stress scores),
+        service category breakdown, and high-stress region alerts.
+      operationId: waterReport
+      security:
+        - BearerAuth: []
+        - ApiKeyAuth: []
+      parameters:
+        - name: start_date
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: end_date
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: provider
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Water report
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WaterReportResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /reports/forecast:
+    get:
+      tags: [Reports]
+      summary: Holt-Winters metric forecast
+      description: |
+        Return Holt-Winters exponential smoothing forecasts for one or more metrics.
+        Includes 80% confidence intervals and 14-day holdout MAE.
+
+        **Supported metrics:** cost_usd, total_co2e_kg, water_litres, water_stress_adjusted_litres
+      operationId: forecastReport
+      security:
+        - BearerAuth: []
+        - ApiKeyAuth: []
+      parameters:
+        - name: metrics
+          in: query
+          schema:
+            type: string
+            default: "cost_usd,total_co2e_kg"
+          description: Comma-separated list of metrics to forecast
+        - name: horizon_days
+          in: query
+          schema:
+            type: integer
+            minimum: 7
+            maximum: 365
+            default: 90
+      responses:
+        "200":
+          description: Forecast results keyed by metric name
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ForecastResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+
+  # ---------------------------------------------------------------------------
+  # Natural Language Query (Session 4)
+  # ---------------------------------------------------------------------------
+
+  /query/natural-language:
+    post:
+      tags: [Query]
+      summary: Natural language query
+      description: |
+        Translate a natural language question into a SQL query and execute it
+        against the enriched billing data. Returns the generated SQL, results,
+        and 3 follow-up question suggestions.
+
+        **Required role:** analyst or above.
+      operationId: naturalLanguageQuery
+      security:
+        - BearerAuth: []
+        - ApiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/NLQueryRequest"
+            example:
+              question: "Which AWS regions have the highest carbon intensity this month?"
+      responses:
+        "200":
+          description: Query results with generated SQL and follow-up suggestions
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NLQueryResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+
+  /reports/cost-carbon:
+    get:
+      tags: [Reports]
+      summary: Cost vs carbon report
+      description: Correlate cloud spend with carbon emissions by service and region. Implemented in Session 5.
+      operationId: costCarbonReport
+      responses:
+        "200":
+          description: Cost vs carbon report
+
+  # ---------------------------------------------------------------------------
+  # Policies (Session 5)
+  # ---------------------------------------------------------------------------
+
+  /policies:
+    get:
+      tags: [Policies]
+      summary: List governance policy rules
+      description: Return active governance policy rules for the current tenant.
+      operationId: listPolicies
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: List of policy rules
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+    post:
+      tags: [Policies]
+      summary: Create a policy rule
+      description: Create a new governance policy rule. Requires admin role.
+      operationId: createPolicy
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        "201":
+          description: Policy rule created
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  # ---------------------------------------------------------------------------
+  # Agents (Session 5)
+  # ---------------------------------------------------------------------------
+
+  /agents:
+    get:
+      tags: [Agents]
+      summary: List agent configurations
+      description: Return all agent configurations for the current tenant.
+      operationId: listAgents
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: List of agent configurations
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/AgentConfigResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /agents/{agent_type}:
+    patch:
+      tags: [Agents]
+      summary: Update agent configuration
+      description: Update an agent's configuration. Requires admin role.
+      operationId: updateAgentConfig
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: agent_type
+          in: path
+          required: true
+          schema:
+            type: string
+            enum: [anomaly_detector, carbon_spike_monitor, rightsizing_agent, idle_reaper, green_scheduler]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AgentConfigPatchRequest"
+      responses:
+        "200":
+          description: Updated agent configuration
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgentConfigResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /agents/{agent_type}/run:
+    post:
+      tags: [Agents]
+      summary: Trigger manual agent run
+      description: Trigger an immediate manual run of the specified agent as a background task.
+      operationId: triggerAgentRun
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: agent_type
+          in: path
+          required: true
+          schema:
+            type: string
+            enum: [anomaly_detector, carbon_spike_monitor, rightsizing_agent, idle_reaper, green_scheduler]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ManualRunRequest"
+      responses:
+        "202":
+          description: Agent run started
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ManualRunResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /agents/runs:
+    get:
+      tags: [Agents]
+      summary: List agent runs
+      description: Return paginated list of agent runs for the current tenant.
+      operationId: listAgentRuns
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: agent_type
+          in: query
+          schema:
+            type: string
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [running, completed, failed]
+        - $ref: "#/components/parameters/PageParam"
+        - $ref: "#/components/parameters/PageSizeParam"
+      responses:
+        "200":
+          description: Paginated list of agent runs
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgentRunListResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /agents/runs/{run_id}:
+    get:
+      tags: [Agents]
+      summary: Get agent run detail
+      description: Return full agent run detail including all actions taken.
+      operationId: getAgentRun
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: run_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Agent run detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgentRunResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /agents/runs/{run_id}/approve:
+    post:
+      tags: [Agents]
+      summary: Approve a pending agent action
+      description: Approve a pending_approval action from an agent run. Requires engineer role.
+      operationId: approveAgentAction
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: run_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ApproveActionRequest"
+      responses:
+        "200":
+          description: Action approved
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApproveActionResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"

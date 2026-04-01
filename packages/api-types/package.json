@@ -1,0 +1,25 @@
+{
+  "name": "@cloudcarbon/api-types",
+  "version": "0.1.0",
+  "private": true,
+  "description": "TypeScript types auto-generated from OpenAPI spec",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsc --build",
+    "dev": "tsc --build --watch",
+    "lint": "eslint src",
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf dist tsconfig.tsbuildinfo"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.0"
+  }
+}

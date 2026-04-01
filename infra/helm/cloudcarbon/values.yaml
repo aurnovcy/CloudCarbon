@@ -1,0 +1,268 @@
+# ============================================================
+# CloudCarbon Helm Chart — Default Values
+# ============================================================
+# Override values with: helm install cloudcarbon . -f my-values.yaml
+
+global:
+  imageRegistry: ""
+  imagePullSecrets: []
+  storageClass: ""
+
+# ============================================================
+# API Service
+# ============================================================
+api:
+  enabled: true
+  replicaCount: 2
+
+  image:
+    repository: ghcr.io/cloudcarbon/api
+    tag: "0.5.0"
+    pullPolicy: IfNotPresent
+
+  service:
+    type: ClusterIP
+    port: 8000
+    targetPort: 8000
+
+  ingress:
+    enabled: false
+    className: nginx
+    annotations:
+      nginx.ingress.kubernetes.io/proxy-body-size: "100m"
+      nginx.ingress.kubernetes.io/proxy-read-timeout: "300"
+    hosts:
+      - host: api.cloudcarbon.example.com
+        paths:
+          - path: /
+            pathType: Prefix
+    tls: []
+
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+
+  autoscaling:
+    enabled: false
+    minReplicas: 2
+    maxReplicas: 10
+    targetCPUUtilizationPercentage: 70
+    targetMemoryUtilizationPercentage: 80
+
+  livenessProbe:
+    httpGet:
+      path: /health
+      port: 8000
+    initialDelaySeconds: 30
+    periodSeconds: 30
+    timeoutSeconds: 10
+    failureThreshold: 3
+
+  readinessProbe:
+    httpGet:
+      path: /health
+      port: 8000
+    initialDelaySeconds: 15
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 3
+
+  env:
+    ENVIRONMENT: production
+    LOG_LEVEL: INFO
+    WORKERS: "4"
+
+  # Secrets are mounted from a Kubernetes Secret named cloudcarbon-api-secrets
+  secretEnvFrom:
+    - secretRef:
+        name: cloudcarbon-api-secrets
+
+  podAnnotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/path: "/metrics"
+    prometheus.io/port: "8000"
+
+  podSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 1001
+    fsGroup: 1001
+
+  containerSecurityContext:
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: true
+    capabilities:
+      drop:
+        - ALL
+
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+  topologySpreadConstraints:
+    - maxSkew: 1
+      topologyKey: kubernetes.io/hostname
+      whenUnsatisfiable: DoNotSchedule
+      labelSelector:
+        matchLabels:
+          app.kubernetes.io/component: api
+
+# ============================================================
+# Agents Service
+# ============================================================
+agents:
+  enabled: true
+  replicaCount: 1
+
+  image:
+    repository: ghcr.io/cloudcarbon/agents
+    tag: "0.5.0"
+    pullPolicy: IfNotPresent
+
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+  env:
+    LOG_LEVEL: INFO
+
+  secretEnvFrom:
+    - secretRef:
+        name: cloudcarbon-api-secrets
+
+  podAnnotations: {}
+
+  podSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 1001
+    fsGroup: 1001
+
+  containerSecurityContext:
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: true
+    capabilities:
+      drop:
+        - ALL
+
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+# ============================================================
+# Database migration Job
+# ============================================================
+migrations:
+  enabled: true
+  image:
+    repository: ghcr.io/cloudcarbon/api
+    tag: "0.5.0"
+    pullPolicy: IfNotPresent
+  command: ["alembic", "upgrade", "head"]
+  restartPolicy: OnFailure
+  backoffLimit: 3
+
+# ============================================================
+# PostgreSQL (Bitnami subchart)
+# ============================================================
+postgresql:
+  enabled: true
+  auth:
+    database: cloudcarbon
+    username: cloudcarbon
+    existingSecret: cloudcarbon-postgres-secret
+    secretKeys:
+      adminPasswordKey: postgres-password
+      userPasswordKey: password
+  primary:
+    persistence:
+      enabled: true
+      size: 50Gi
+    resources:
+      requests:
+        cpu: 500m
+        memory: 1Gi
+      limits:
+        cpu: 2000m
+        memory: 4Gi
+    configuration: |
+      max_connections = 200
+      shared_buffers = 256MB
+      effective_cache_size = 768MB
+      maintenance_work_mem = 64MB
+      checkpoint_completion_target = 0.9
+      wal_buffers = 16MB
+      default_statistics_target = 100
+      random_page_cost = 1.1
+      effective_io_concurrency = 200
+      work_mem = 4MB
+      min_wal_size = 1GB
+      max_wal_size = 4GB
+
+# ============================================================
+# Redis (Bitnami subchart)
+# ============================================================
+redis:
+  enabled: true
+  auth:
+    enabled: true
+    existingSecret: cloudcarbon-redis-secret
+    existingSecretPasswordKey: redis-password
+  master:
+    persistence:
+      enabled: true
+      size: 8Gi
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+      limits:
+        cpu: 500m
+        memory: 512Mi
+  replica:
+    replicaCount: 1
+
+# ============================================================
+# Service Account
+# ============================================================
+serviceAccount:
+  create: true
+  annotations: {}
+  name: cloudcarbon
+
+# ============================================================
+# Network Policy
+# ============================================================
+networkPolicy:
+  enabled: false
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: cloudcarbon
+
+# ============================================================
+# Pod Disruption Budget
+# ============================================================
+podDisruptionBudget:
+  api:
+    enabled: true
+    minAvailable: 1
+  agents:
+    enabled: false
+
+# ============================================================
+# Monitoring (Prometheus ServiceMonitor)
+# ============================================================
+serviceMonitor:
+  enabled: false
+  namespace: monitoring
+  interval: 30s
+  scrapeTimeout: 10s
+  labels: {}

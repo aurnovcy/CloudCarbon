@@ -1,38 +1,36 @@
 """
-Alembic environment configuration for CloudCarbon.
-Supports both offline (SQL generation) and online (live DB) migration modes.
+Alembic environment configuration for CloudCarbon (synchronous).
 """
 from __future__ import annotations
 
-import asyncio
 import os
 import sys
 from logging.config import fileConfig
 
 from alembic import context
-from sqlalchemy import pool
-from sqlalchemy.engine import Connection
-from sqlalchemy.ext.asyncio import async_engine_from_config
+from sqlalchemy import engine_from_config, pool
 
 # ---------------------------------------------------------------------------
-# Make the src package importable
+# Make src package importable
 # ---------------------------------------------------------------------------
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+_here = os.path.dirname(os.path.abspath(__file__))
+_api_dir = os.path.dirname(_here)          # apps/api
+_src_dir = os.path.join(_api_dir, "src")   # apps/api/src
 
-# Import Base and all models so autogenerate can discover the full schema.
-# We import Base directly from the ORM base module to avoid triggering
-# the async engine creation in database.py at import time.
-from sqlalchemy.orm import DeclarativeBase
+for _p in (_api_dir, _src_dir):
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
 
-class _Base(DeclarativeBase):
-    pass
+# Also add local packages
+_project_root = os.path.abspath(os.path.join(_api_dir, "..", ".."))
+for _pkg in ("packages/carbon-models/src", "packages/focus-schema/src"):
+    _full = os.path.join(_project_root, _pkg)
+    if os.path.isdir(_full) and _full not in sys.path:
+        sys.path.insert(0, _full)
 
-# Now import all models — they register against their own Base
-# We need to import them so their metadata is populated
-import importlib, src.models as _models_pkg  # noqa: E402, F401
-
-# Resolve the actual Base used by the models
+# Import Base and all models so autogenerate discovers the full schema
 from src.database import Base  # noqa: E402
+import src.models  # noqa: F401, E402 — registers all models against Base
 
 # ---------------------------------------------------------------------------
 # Alembic Config
@@ -42,9 +40,22 @@ config = context.config
 # Allow DATABASE_URL env var to override alembic.ini
 _db_url = os.getenv("DATABASE_URL", "")
 if _db_url:
-    # Use sync psycopg2 driver for offline/autogenerate
-    _sync_url = _db_url.replace("postgresql+asyncpg://", "postgresql://")
+    _sync_url = (
+        _db_url
+        .replace("postgresql+asyncpg://", "postgresql+psycopg2://")
+        .replace("postgresql://", "postgresql+psycopg2://")
+    )
     config.set_main_option("sqlalchemy.url", _sync_url)
+else:
+    # Ensure the ini URL uses psycopg2
+    _ini_url = config.get_main_option("sqlalchemy.url") or ""
+    _ini_url = (
+        _ini_url
+        .replace("postgresql+asyncpg://", "postgresql+psycopg2://")
+        .replace("postgresql://", "postgresql+psycopg2://")
+    )
+    if _ini_url:
+        config.set_main_option("sqlalchemy.url", _ini_url)
 
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
@@ -53,7 +64,7 @@ target_metadata = Base.metadata
 
 
 # ---------------------------------------------------------------------------
-# Offline mode — emit SQL to stdout without a live connection
+# Offline mode
 # ---------------------------------------------------------------------------
 
 def run_migrations_offline() -> None:
@@ -71,36 +82,24 @@ def run_migrations_offline() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Online mode — connect to a live database (async)
+# Online mode (synchronous)
 # ---------------------------------------------------------------------------
 
-def do_run_migrations(connection: Connection) -> None:
-    context.configure(
-        connection=connection,
-        target_metadata=target_metadata,
-        compare_type=True,
-        compare_server_default=True,
-    )
-    with context.begin_transaction():
-        context.run_migrations()
-
-
-async def run_async_migrations() -> None:
-    _url = config.get_main_option("sqlalchemy.url", "").replace(
-        "postgresql://", "postgresql+asyncpg://"
-    )
-    connectable = async_engine_from_config(
-        {"sqlalchemy.url": _url},
+def run_migrations_online() -> None:
+    connectable = engine_from_config(
+        config.get_section(config.config_ini_section),
         prefix="sqlalchemy.",
         poolclass=pool.NullPool,
     )
-    async with connectable.connect() as connection:
-        await connection.run_sync(do_run_migrations)
-    await connectable.dispose()
-
-
-def run_migrations_online() -> None:
-    asyncio.run(run_async_migrations())
+    with connectable.connect() as connection:
+        context.configure(
+            connection=connection,
+            target_metadata=target_metadata,
+            compare_type=True,
+            compare_server_default=True,
+        )
+        with context.begin_transaction():
+            context.run_migrations()
 
 
 if context.is_offline_mode():

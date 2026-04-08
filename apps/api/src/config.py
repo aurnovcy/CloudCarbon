@@ -38,8 +38,15 @@ class Settings(BaseSettings):
     # -------------------------------------------------------------------------
     # Database
     # -------------------------------------------------------------------------
-    database_url: str = "postgresql+asyncpg://user:password@localhost:5432/cloudcarbon"
+    database_url: str = "postgresql+psycopg2://postgres:postgres@localhost:5432/cloudcarbon"
     database_pool_size: int = 10
+
+    @field_validator("database_url")
+    @classmethod
+    def fix_database_url(cls, v: str) -> str:
+        return v.replace("postgresql+asyncpg://", "postgresql+psycopg2://").replace(
+            "postgresql://", "postgresql+psycopg2://"
+        )
 
     # -------------------------------------------------------------------------
     # Redis

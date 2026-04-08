@@ -1,11 +1,5 @@
 """
-Authentication router.
-
-Endpoints:
-  POST /auth/token    — exchange OAuth2 code for JWT pair
-  POST /auth/refresh  — refresh access token using refresh token
-  POST /auth/logout   — invalidate refresh token
-  GET  /auth/me       — return current user profile
+Authentication router (synchronous).
 """
 from __future__ import annotations
 
@@ -13,11 +7,12 @@ import uuid
 from datetime import datetime, timezone
 from typing import Annotated
 
+import redis
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, status
 from jose import JWTError
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import Session
 
 from src.database import get_db
 from src.dependencies.auth import CurrentUser, CurrentUserDep, get_current_user
@@ -38,8 +33,6 @@ from src.services.jwt_service import (
 )
 from src.services.oauth_service import exchange_code_for_user_info
 
-import redis.asyncio as aioredis
-
 logger = structlog.get_logger(__name__)
 router = APIRouter()
 
@@ -51,17 +44,14 @@ _REFRESH_TOKEN_KEY_PREFIX = "refresh_token:"
 # ---------------------------------------------------------------------------
 
 @router.post("/token", response_model=TokenResponse, status_code=status.HTTP_200_OK)
-async def exchange_token(
+def exchange_token(
     request: OAuthCodeRequest,
-    db: Annotated[AsyncSession, Depends(get_db)],
-    redis: Annotated[aioredis.Redis, Depends(get_redis)],
+    db: Annotated[Session, Depends(get_db)],
+    redis_client: Annotated[redis.Redis, Depends(get_redis)],
 ) -> TokenResponse:
-    """
-    Exchange an OAuth2 authorization code for a CloudCarbon JWT pair.
-    Supports Google, Azure AD, and Okta.
-    """
+    """Exchange an OAuth2 authorization code for a CloudCarbon JWT pair."""
     try:
-        user_info = await exchange_code_for_user_info(
+        user_info = exchange_code_for_user_info(
             provider=request.provider,
             code=request.code,
             redirect_uri=request.redirect_uri,
@@ -73,32 +63,26 @@ async def exchange_token(
             detail="OAuth code exchange failed",
         ) from exc
 
-    # Find or create user
     stmt = select(User).where(
         User.email == user_info.email,
         User.auth_provider == request.provider,
     )
-    result = await db.execute(stmt)
+    result = db.execute(stmt)
     user = result.scalar_one_or_none()
 
     if user is None:
-        # Auto-provision: first OAuth login creates the user.
-        # In production, tenant assignment would be handled via invite flow.
-        # For now, raise 404 to indicate the user must be provisioned first.
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="User not found. Please contact your administrator to provision access.",
         )
 
-    # Update last login
     user.last_login = datetime.now(tz=timezone.utc)
-    await db.flush()
+    db.flush()
 
     access_token, expires_in = create_access_token(user.id, user.tenant_id, user.role)
     refresh_token, refresh_ttl, jti = create_refresh_token(user.id, user.tenant_id, user.role)
 
-    # Store refresh token JTI in Redis with TTL
-    await redis.setex(
+    redis_client.setex(
         f"{_REFRESH_TOKEN_KEY_PREFIX}{jti}",
         refresh_ttl,
         str(user.id),
@@ -119,15 +103,12 @@ async def exchange_token(
 # ---------------------------------------------------------------------------
 
 @router.post("/refresh", response_model=AccessTokenResponse, status_code=status.HTTP_200_OK)
-async def refresh_token(
+def refresh_token(
     request: RefreshTokenRequest,
-    db: Annotated[AsyncSession, Depends(get_db)],
-    redis: Annotated[aioredis.Redis, Depends(get_redis)],
+    db: Annotated[Session, Depends(get_db)],
+    redis_client: Annotated[redis.Redis, Depends(get_redis)],
 ) -> AccessTokenResponse:
-    """
-    Exchange a valid refresh token for a new access token.
-    The refresh token's JTI must be present in Redis (not expired or revoked).
-    """
+    """Exchange a valid refresh token for a new access token."""
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Invalid or expired refresh token",
@@ -144,15 +125,13 @@ async def refresh_token(
     if payload.jti is None:
         raise credentials_exception
 
-    # Verify JTI exists in Redis
-    stored = await redis.get(f"{_REFRESH_TOKEN_KEY_PREFIX}{payload.jti}")
+    stored = redis_client.get(f"{_REFRESH_TOKEN_KEY_PREFIX}{payload.jti}")
     if stored is None:
         raise credentials_exception
 
-    # Fetch user to get current role (may have changed)
     user_id = uuid.UUID(payload.sub)
     stmt = select(User).where(User.id == user_id)
-    result = await db.execute(stmt)
+    result = db.execute(stmt)
     user = result.scalar_one_or_none()
 
     if user is None:
@@ -172,27 +151,21 @@ async def refresh_token(
 # ---------------------------------------------------------------------------
 
 @router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
-async def logout(
+def logout(
     request: RefreshTokenRequest,
-    redis: Annotated[aioredis.Redis, Depends(get_redis)],
+    redis_client: Annotated[redis.Redis, Depends(get_redis)],
 ) -> None:
-    """
-    Invalidate a refresh token by removing its JTI from Redis.
-    Also adds the JTI to the blacklist so in-flight access tokens are rejected.
-    """
+    """Invalidate a refresh token by removing its JTI from Redis."""
     try:
         payload = decode_token(request.refresh_token)
     except JWTError:
-        # Silently succeed — token is already invalid
         return
 
     if payload.jti:
-        # Remove from active refresh tokens
-        await redis.delete(f"{_REFRESH_TOKEN_KEY_PREFIX}{payload.jti}")
-        # Add to blacklist until expiry
+        redis_client.delete(f"{_REFRESH_TOKEN_KEY_PREFIX}{payload.jti}")
         remaining_ttl = payload.exp - int(datetime.now(tz=timezone.utc).timestamp())
         if remaining_ttl > 0:
-            await redis.setex(f"blacklist:jti:{payload.jti}", remaining_ttl, "1")
+            redis_client.setex(f"blacklist:jti:{payload.jti}", remaining_ttl, "1")
 
     logger.info("User logged out", user_id=payload.sub)
 
@@ -202,13 +175,13 @@ async def logout(
 # ---------------------------------------------------------------------------
 
 @router.get("/me", response_model=CurrentUserResponse)
-async def get_me(
+def get_me(
     current_user: CurrentUserDep,
-    db: Annotated[AsyncSession, Depends(get_db)],
+    db: Annotated[Session, Depends(get_db)],
 ) -> CurrentUserResponse:
     """Return the authenticated user's profile."""
     stmt = select(User).where(User.id == current_user.id)
-    result = await db.execute(stmt)
+    result = db.execute(stmt)
     user = result.scalar_one_or_none()
 
     if user is None:

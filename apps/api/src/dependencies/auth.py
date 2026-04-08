@@ -1,5 +1,5 @@
 """
-FastAPI authentication dependencies.
+FastAPI authentication dependencies (synchronous).
 
 Provides:
   - get_current_user()  — validates JWT or API key, returns CurrentUser
@@ -11,19 +11,18 @@ import uuid
 from dataclasses import dataclass
 from typing import Annotated
 
+import redis
 from fastapi import Depends, HTTPException, Security, status
 from fastapi.security import APIKeyHeader, HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import Session
 
 from src.database import get_db
 from src.models.user import User
 from src.redis_client import get_redis
 from src.services.api_key_service import API_KEY_PREFIX, get_api_key_by_raw
 from src.services.jwt_service import decode_token
-
-import redis.asyncio as aioredis
 
 # ---------------------------------------------------------------------------
 # Security schemes
@@ -62,11 +61,11 @@ class CurrentUser:
 # Core dependency: get_current_user
 # ---------------------------------------------------------------------------
 
-async def get_current_user(
+def get_current_user(
     bearer: Annotated[HTTPAuthorizationCredentials | None, Depends(_bearer_scheme)],
     api_key: Annotated[str | None, Security(_api_key_header)],
-    db: Annotated[AsyncSession, Depends(get_db)],
-    redis: Annotated[aioredis.Redis, Depends(get_redis)],
+    db: Annotated[Session, Depends(get_db)],
+    redis_client: Annotated[redis.Redis, Depends(get_redis)],
 ) -> CurrentUser:
     """
     Authenticate the request via JWT Bearer token or X-API-Key header.
@@ -89,13 +88,13 @@ async def get_current_user(
 
         # Check refresh token blacklist in Redis
         if payload.jti:
-            blacklisted = await redis.get(f"blacklist:jti:{payload.jti}")
+            blacklisted = redis_client.get(f"blacklist:jti:{payload.jti}")
             if blacklisted:
                 raise credentials_exception
 
         user_id = uuid.UUID(payload.sub)
         stmt = select(User).where(User.id == user_id)
-        result = await db.execute(stmt)
+        result = db.execute(stmt)
         user = result.scalar_one_or_none()
 
         if user is None:
@@ -114,12 +113,12 @@ async def get_current_user(
     # Path 2: API key (X-API-Key header)
     # -----------------------------------------------------------------------
     if api_key is not None and api_key.startswith(API_KEY_PREFIX):
-        key_record = await get_api_key_by_raw(db, api_key)
+        key_record = get_api_key_by_raw(db, api_key)
         if key_record is None:
             raise credentials_exception
 
         stmt = select(User).where(User.id == key_record.user_id)
-        result = await db.execute(stmt)
+        result = db.execute(stmt)
         user = result.scalar_one_or_none()
 
         if user is None:
@@ -146,13 +145,10 @@ def require_role(minimum_role: str):
     Returns a FastAPI dependency that enforces a minimum role.
 
     Role hierarchy: admin > engineer > analyst > viewer
-
-    Usage:
-        @router.get("/admin-only", dependencies=[Depends(require_role("admin"))])
     """
     required_level = ROLE_HIERARCHY.get(minimum_role, 0)
 
-    async def _check_role(
+    def _check_role(
         current_user: Annotated[CurrentUser, Depends(get_current_user)],
     ) -> CurrentUser:
         user_level = ROLE_HIERARCHY.get(current_user.role, 0)

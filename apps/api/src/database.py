@@ -1,16 +1,10 @@
 """
-Async SQLAlchemy 2.0 engine, session factory, and base declarative model.
+Synchronous SQLAlchemy 2.0 engine, session factory, and base declarative model.
 """
 from __future__ import annotations
 
-from collections.abc import AsyncGenerator
-
-from sqlalchemy.ext.asyncio import (
-    AsyncSession,
-    async_sessionmaker,
-    create_async_engine,
-)
-from sqlalchemy.orm import DeclarativeBase
+from sqlalchemy import create_engine
+from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 from src.config import get_settings
 
@@ -20,9 +14,9 @@ class Base(DeclarativeBase):
     pass
 
 
-def _create_engine() -> object:
+def _create_engine():
     settings = get_settings()
-    return create_async_engine(
+    return create_engine(
         settings.database_url,
         pool_size=settings.database_pool_size,
         max_overflow=20,
@@ -33,23 +27,21 @@ def _create_engine() -> object:
 
 engine = _create_engine()
 
-AsyncSessionLocal = async_sessionmaker(
-    bind=engine,  # type: ignore[arg-type]
-    class_=AsyncSession,
-    expire_on_commit=False,
-    autoflush=False,
+SessionLocal = sessionmaker(
+    bind=engine,
     autocommit=False,
+    autoflush=False,
 )
 
 
-async def get_db() -> AsyncGenerator[AsyncSession, None]:
-    """FastAPI dependency that yields a database session."""
-    async with AsyncSessionLocal() as session:
-        try:
-            yield session
-            await session.commit()
-        except Exception:
-            await session.rollback()
-            raise
-        finally:
-            await session.close()
+def get_db():
+    """FastAPI dependency that yields a synchronous database session."""
+    db: Session = SessionLocal()
+    try:
+        yield db
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()

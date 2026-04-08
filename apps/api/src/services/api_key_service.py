@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 
 from passlib.context import CryptContext
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import Session
 
 from src.models.api_key import ApiKey
 
@@ -35,8 +35,8 @@ def verify_key(raw_key: str, key_hash: str) -> bool:
     return _pwd_context.verify(raw_key, key_hash)
 
 
-async def create_api_key(
-    db: AsyncSession,
+def create_api_key(
+    db: Session,
     tenant_id: uuid.UUID,
     user_id: uuid.UUID,
     name: str,
@@ -60,12 +60,12 @@ async def create_api_key(
         expires_at=expires_at,
     )
     db.add(api_key)
-    await db.flush()  # Get the ID without committing
+    db.flush()  # Get the ID without committing
     return api_key, raw_key
 
 
-async def get_api_key_by_raw(
-    db: AsyncSession,
+def get_api_key_by_raw(
+    db: Session,
     raw_key: str,
 ) -> ApiKey | None:
     """
@@ -77,20 +77,17 @@ async def get_api_key_by_raw(
     if not raw_key.startswith(API_KEY_PREFIX):
         return None
 
-    # Fetch all non-expired keys (we must check hash for each — bcrypt is not reversible)
-    # In production, consider adding a fast lookup prefix column to avoid full table scans
     now = datetime.now(tz=timezone.utc)
     stmt = select(ApiKey).where(
         (ApiKey.expires_at.is_(None)) | (ApiKey.expires_at > now)
     )
-    result = await db.execute(stmt)
+    result = db.execute(stmt)
     keys = result.scalars().all()
 
     for key in keys:
         if verify_key(raw_key, key.key_hash):
-            # Update last_used_at
             key.last_used_at = now
-            await db.flush()
+            db.flush()
             return key
 
     return None

@@ -1,14 +1,13 @@
 """
 OAuth2 provider service — exchanges authorization codes for user info
-from Google, Azure AD, and Okta using Authlib.
+from Google, Azure AD, and Okta using Authlib (sync).
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Literal
 
-import httpx
-from authlib.integrations.httpx_client import AsyncOAuth2Client
+from authlib.integrations.httpx_client import OAuth2Client
 
 from src.config import get_settings
 
@@ -29,22 +28,22 @@ class OAuthUserInfo:
 # Provider configurations
 # ---------------------------------------------------------------------------
 
-def _google_client() -> AsyncOAuth2Client:
-    return AsyncOAuth2Client(
+def _google_client() -> OAuth2Client:
+    return OAuth2Client(
         client_id=settings.google_client_id,
         client_secret=settings.google_client_secret,
     )
 
 
-def _azure_ad_client() -> AsyncOAuth2Client:
-    return AsyncOAuth2Client(
+def _azure_ad_client() -> OAuth2Client:
+    return OAuth2Client(
         client_id=settings.azure_ad_client_id,
         client_secret=settings.azure_ad_client_secret,
     )
 
 
-def _okta_client() -> AsyncOAuth2Client:
-    return AsyncOAuth2Client(
+def _okta_client() -> OAuth2Client:
+    return OAuth2Client(
         client_id=settings.okta_client_id,
         client_secret=settings.okta_client_secret,
     )
@@ -54,7 +53,7 @@ def _okta_client() -> AsyncOAuth2Client:
 # Token exchange
 # ---------------------------------------------------------------------------
 
-async def exchange_code_for_user_info(
+def exchange_code_for_user_info(
     provider: OAuthProvider,
     code: str,
     redirect_uri: str,
@@ -63,27 +62,27 @@ async def exchange_code_for_user_info(
     Exchange an OAuth2 authorization code for user profile information.
     """
     if provider == "google":
-        return await _exchange_google(code, redirect_uri)
+        return _exchange_google(code, redirect_uri)
     elif provider == "azure_ad":
-        return await _exchange_azure_ad(code, redirect_uri)
+        return _exchange_azure_ad(code, redirect_uri)
     elif provider == "okta":
-        return await _exchange_okta(code, redirect_uri)
+        return _exchange_okta(code, redirect_uri)
     else:
         raise ValueError(f"Unsupported OAuth provider: {provider}")
 
 
-async def _exchange_google(code: str, redirect_uri: str) -> OAuthUserInfo:
+def _exchange_google(code: str, redirect_uri: str) -> OAuthUserInfo:
     token_url = "https://oauth2.googleapis.com/token"
     userinfo_url = "https://www.googleapis.com/oauth2/v3/userinfo"
 
-    async with _google_client() as client:
-        token = await client.fetch_token(
+    with _google_client() as client:
+        client.fetch_token(
             token_url,
             code=code,
             redirect_uri=redirect_uri,
             grant_type="authorization_code",
         )
-        resp = await client.get(userinfo_url)
+        resp = client.get(userinfo_url)
         resp.raise_for_status()
         data = resp.json()
 
@@ -95,19 +94,19 @@ async def _exchange_google(code: str, redirect_uri: str) -> OAuthUserInfo:
     )
 
 
-async def _exchange_azure_ad(code: str, redirect_uri: str) -> OAuthUserInfo:
+def _exchange_azure_ad(code: str, redirect_uri: str) -> OAuthUserInfo:
     tenant_id = settings.azure_ad_tenant_id
     token_url = f"https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token"
     userinfo_url = "https://graph.microsoft.com/v1.0/me"
 
-    async with _azure_ad_client() as client:
-        await client.fetch_token(
+    with _azure_ad_client() as client:
+        client.fetch_token(
             token_url,
             code=code,
             redirect_uri=redirect_uri,
             grant_type="authorization_code",
         )
-        resp = await client.get(userinfo_url)
+        resp = client.get(userinfo_url)
         resp.raise_for_status()
         data = resp.json()
 
@@ -119,19 +118,19 @@ async def _exchange_azure_ad(code: str, redirect_uri: str) -> OAuthUserInfo:
     )
 
 
-async def _exchange_okta(code: str, redirect_uri: str) -> OAuthUserInfo:
+def _exchange_okta(code: str, redirect_uri: str) -> OAuthUserInfo:
     domain = settings.okta_domain
     token_url = f"https://{domain}/oauth2/v1/token"
     userinfo_url = f"https://{domain}/oauth2/v1/userinfo"
 
-    async with _okta_client() as client:
-        await client.fetch_token(
+    with _okta_client() as client:
+        client.fetch_token(
             token_url,
             code=code,
             redirect_uri=redirect_uri,
             grant_type="authorization_code",
         )
-        resp = await client.get(userinfo_url)
+        resp = client.get(userinfo_url)
         resp.raise_for_status()
         data = resp.json()
 

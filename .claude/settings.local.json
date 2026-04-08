@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -m venv venv)",
+      "Bash(py --version)",
+      "Bash(py -3 --version)",
+      "Bash(py -3 -m venv /c/Users/aurno/Downloads/cloudcarbon/.claude/worktrees/beautiful-easley/venv)"
+    ]
+  }
+}

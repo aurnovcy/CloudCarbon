@@ -1,8 +1,5 @@
 """
-Natural Language Query router.
-
-Endpoints:
-  POST /query/natural-language — translate NL question to SQL and execute
+Natural Language Query router (synchronous).
 """
 from __future__ import annotations
 
@@ -11,7 +8,7 @@ from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import Session
 
 from src.database import get_db
 from src.dependencies.auth import require_role
@@ -36,40 +33,18 @@ class NLQueryResponse(BaseModel):
 
 
 @router.post("/natural-language", response_model=NLQueryResponse)
-async def natural_language_query(
+def natural_language_query(
     body: NLQueryRequest,
     current_user=Depends(require_role("analyst")),
-    db: AsyncSession = Depends(get_db),
+    db: Session = Depends(get_db),
 ):
-    """
-    Translate a natural language question into a SQL query and execute it.
-
-    Returns the generated SQL, query results, and 3 follow-up question suggestions.
-
-    **Required role:** analyst or above.
-
-    **Example questions:**
-    - "What is my total cloud spend by provider this month?"
-    - "Which services have the highest carbon emissions?"
-    - "Show me water consumption by region for AWS"
-    - "What is my Scope 3 carbon breakdown?"
-    """
     tenant_id = current_user.tenant_id
 
-    result = await natural_language_to_sql(
-        question=body.question,
-        tenant_id=tenant_id,
-        db=db,
-    )
+    result = natural_language_to_sql(question=body.question, tenant_id=tenant_id, db=db)
 
-    # Generate follow-up suggestions
     if result.supported and result.results is not None:
-        results_summary = (
-            f"{result.row_count} rows returned"
-            if result.row_count > 0
-            else "No results found"
-        )
-        suggestions = await suggest_followup_questions(body.question, results_summary)
+        results_summary = f"{result.row_count} rows returned" if result.row_count > 0 else "No results found"
+        suggestions = suggest_followup_questions(body.question, results_summary)
     else:
         suggestions = [
             "What is my total cloud spend by provider this month?",
@@ -78,11 +53,7 @@ async def natural_language_query(
         ]
 
     return NLQueryResponse(
-        question=body.question,
-        sql=result.sql,
-        results=result.results,
-        row_count=result.row_count,
-        suggestions=suggestions,
-        supported=result.supported,
-        error=result.error,
+        question=body.question, sql=result.sql, results=result.results,
+        row_count=result.row_count, suggestions=suggestions,
+        supported=result.supported, error=result.error,
     )

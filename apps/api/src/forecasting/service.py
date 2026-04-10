@@ -36,7 +36,7 @@ class ForecastResult:
 
 
 _METRIC_SQL_MAP = {
-    "cost_usd": "COALESCE(SUM(fr.effective_cost), 0)",
+    "cost_usd": "COALESCE(SUM(fr.cost_usd), 0)",
     "total_co2e_kg": "COALESCE(SUM(er.total_co2e_kg), 0)",
     "water_litres": "COALESCE(SUM(er.water_litres), 0)",
     "water_stress_adjusted_litres": "COALESCE(SUM(er.water_stress_adjusted_litres), 0)",
@@ -49,11 +49,11 @@ def _load_daily_series(
     agg_expr = _METRIC_SQL_MAP[metric]
     cutoff = datetime.now(timezone.utc) - timedelta(days=lookback_days)
     sql = text(f"""
-        SELECT DATE(fr.charge_period_start) AS day, {agg_expr} AS value
+        SELECT DATE(fr.billing_period_start) AS day, {agg_expr} AS value
         FROM focus_records fr
         JOIN enriched_records er ON er.focus_record_id = fr.id
-        WHERE fr.tenant_id = :tenant_id AND fr.charge_period_start >= :cutoff
-        GROUP BY DATE(fr.charge_period_start) ORDER BY day ASC
+        WHERE fr.tenant_id = :tenant_id AND fr.billing_period_start >= :cutoff
+        GROUP BY DATE(fr.billing_period_start) ORDER BY day ASC
     """)
     result = db.execute(sql, {"tenant_id": str(tenant_id), "cutoff": cutoff})
     rows = result.fetchall()

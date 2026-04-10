@@ -304,6 +304,9 @@ def _validate_provider_credentials(body: CloudAccountCreate) -> CredentialValida
     provider = body.provider.value
     creds = body.credentials
     config = body.config
+    # If no explicit credentials are provided, assume IAM role / managed identity — skip validation.
+    if not creds:
+        return CredentialValidationResult(valid=True, provider=body.provider, message="No credentials provided; assuming IAM role / managed identity")
     try:
         if provider == "aws":
             import boto3

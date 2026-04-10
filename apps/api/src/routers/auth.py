@@ -31,6 +31,8 @@ from src.services.jwt_service import (
     decode_token,
     get_token_type,
 )
+from src.config import get_settings
+from src.models.tenant import Tenant
 from src.services.oauth_service import exchange_code_for_user_info
 
 logger = structlog.get_logger(__name__)
@@ -169,6 +171,59 @@ def logout(
 
     logger.info("User logged out", user_id=payload.sub)
     return {"status": "logged_out"}
+
+
+# ---------------------------------------------------------------------------
+# POST /auth/dev-token  (development / testing only)
+# ---------------------------------------------------------------------------
+
+@router.post("/dev-token", response_model=AccessTokenResponse, status_code=status.HTTP_200_OK)
+def dev_token(
+    db: Annotated[Session, Depends(get_db)],
+) -> AccessTokenResponse:
+    """
+    Return a short-lived JWT for automated tests.
+    Only available when ENVIRONMENT != 'production'.
+    Creates (or reuses) a deterministic test tenant and admin user.
+    """
+    settings = get_settings()
+    if settings.environment == "production":
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
+
+    TEST_TENANT_SLUG = "dev-token-test-tenant"
+    TEST_EMAIL = "devtoken@cloudcarbon.test"
+
+    # Upsert test tenant
+    from sqlalchemy import select as _select
+    tenant = db.execute(_select(Tenant).where(Tenant.slug == TEST_TENANT_SLUG)).scalar_one_or_none()
+    if tenant is None:
+        tenant = Tenant(name="Dev Token Test Tenant", slug=TEST_TENANT_SLUG, plan="pro")
+        db.add(tenant)
+        db.flush()
+
+    # Upsert test user
+    user = db.execute(_select(User).where(User.email == TEST_EMAIL)).scalar_one_or_none()
+    if user is None:
+        user = User(
+            tenant_id=tenant.id,
+            email=TEST_EMAIL,
+            name="Dev Token Admin",
+            role="admin",
+            auth_provider="dev",
+        )
+        db.add(user)
+        db.flush()
+
+    db.commit()
+
+    access_token, expires_in = create_access_token(user.id, user.tenant_id, user.role)
+
+    logger.info("Dev token issued", user_id=str(user.id))
+    return AccessTokenResponse(
+        access_token=access_token,
+        token_type="bearer",
+        expires_in=expires_in,
+    )
 
 
 # ---------------------------------------------------------------------------

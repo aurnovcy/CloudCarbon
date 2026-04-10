@@ -16,7 +16,7 @@ from pydantic import BaseModel, Field
 
 class EnrichmentRunRequest(BaseModel):
     """Request body for POST /enrichment/run."""
-    tenant_id: uuid.UUID = Field(..., description="Tenant UUID to enrich records for")
+    tenant_id: Optional[uuid.UUID] = Field(None, description="Tenant UUID to enrich records for (defaults to caller's tenant)")
     mode: Literal["incremental", "full"] = Field(
         "incremental",
         description=(

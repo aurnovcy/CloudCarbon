@@ -83,10 +83,11 @@ class CloudAccountCreate(BaseModel):
     """Request body for creating a new cloud account connection."""
     model_config = ConfigDict(populate_by_name=True)
 
-    name: str = Field(..., min_length=1, max_length=255, description="Human-readable account name")
+    name: str = Field(..., alias="display_name", min_length=1, max_length=255, description="Human-readable account name")
     provider: CloudProvider
     account_identifier: str = Field(
         ...,
+        alias="account_id",
         description="Provider account ID (AWS account ID, Azure subscription ID, GCP project ID, Alibaba account ID)",
     )
     config: dict[str, Any] = Field(

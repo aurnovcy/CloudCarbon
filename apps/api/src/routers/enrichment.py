@@ -107,6 +107,8 @@ def run_enrichment(
     db: Annotated[Session, Depends(get_db)],
     current_user: Annotated[dict, Depends(require_role("engineer"))],
 ) -> EnrichmentRunResponse:
+    tenant_id = request.tenant_id or current_user.tenant_id
+
     redis_client = None
     try:
         redis_client = get_redis()
@@ -128,7 +130,7 @@ def run_enrichment(
     background_tasks.add_task(
         _run_enrichment_background,
         job_id=job_id,
-        tenant_id=request.tenant_id,
+        tenant_id=tenant_id,
         mode=request.mode,
         enrichment_version=enrichment_version,
         limit=limit,
@@ -136,7 +138,7 @@ def run_enrichment(
     )
 
     return EnrichmentRunResponse(
-        job_id=job_id, tenant_id=request.tenant_id,
+        job_id=job_id, tenant_id=tenant_id,
         mode=request.mode, status="queued", queued_at=queued_at,
     )
 
@@ -166,10 +168,11 @@ def get_enrichment_status(
 
 @router.get("/summary", response_model=EnrichmentSummaryResponse)
 def get_enrichment_summary(
-    tenant_id: Annotated[uuid.UUID, Query(description="Tenant UUID")],
     db: Annotated[Session, Depends(get_db)],
     current_user: Annotated[dict, Depends(require_role("viewer"))],
+    tenant_id: Annotated[Optional[uuid.UUID], Query(description="Tenant UUID (defaults to caller's tenant)")] = None,
 ) -> EnrichmentSummaryResponse:
+    tenant_id = tenant_id or current_user.tenant_id
     svc = EnrichmentService()
     summary = svc.get_summary(tenant_id=tenant_id, db=db)
     return EnrichmentSummaryResponse(

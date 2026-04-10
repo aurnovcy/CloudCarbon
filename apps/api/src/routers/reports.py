@@ -295,9 +295,9 @@ def get_water_report(
 
     region_sql = text(f"""
         SELECT fr.region, fr.provider,
-               COALESCE(SUM(er.water_litres), 0),
-               COALESCE(SUM(er.water_stress_adjusted_litres), 0),
-               COALESCE(AVG(er.water_stress_score), 0),
+               COALESCE(SUM(er.water_litres), 0)                 AS water_litres,
+               COALESCE(SUM(er.water_stress_adjusted_litres), 0) AS water_stress_litres,
+               COALESCE(AVG(er.water_stress_score), 0)           AS water_stress_score,
                er.water_data_source
         FROM focus_records fr
         JOIN enriched_records er ON er.focus_record_id = fr.id
@@ -305,7 +305,7 @@ def get_water_report(
           AND DATE(fr.billing_period_start) BETWEEN :start AND :end
           {provider_filter}
         GROUP BY fr.region, fr.provider, er.water_data_source
-        ORDER BY water_litres DESC
+        ORDER BY 3 DESC
     """)
     by_region = [
         {"region_id": r[0], "provider": r[1], "water_litres": float(r[2] or 0),

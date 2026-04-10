@@ -4,7 +4,11 @@
       "Bash(python -m venv venv)",
       "Bash(py --version)",
       "Bash(py -3 --version)",
-      "Bash(py -3 -m venv /c/Users/aurno/Downloads/cloudcarbon/.claude/worktrees/beautiful-easley/venv)"
+      "Bash(py -3 -m venv /c/Users/aurno/Downloads/cloudcarbon/.claude/worktrees/beautiful-easley/venv)",
+      "Bash([ -d /c/Users/aurno/Downloads/cloudcarbon/.claude/worktrees/beautiful-easley/packages/api-types ])",
+      "Bash(python3)",
+      "Bash(../../venv/Scripts/python.exe -m uvicorn src.main:app --port 8000)",
+      "Bash(curl -s http://localhost:8000/health)"
     ]
   }
 }

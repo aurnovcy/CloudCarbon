@@ -4,68 +4,83 @@ Uses Anthropic Claude to translate natural language to SQL.
 """
 from __future__ import annotations
 
+import json
 import logging
-import os
 import re
-import threading
 from dataclasses import dataclass
 from typing import Any, Optional
 from uuid import UUID
 
+import anthropic
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 logger = logging.getLogger(__name__)
 
-_MAX_TOKENS = 500
-_QUERY_TIMEOUT_SECONDS = 10
-_MAX_RESULT_ROWS = 1000
+client = anthropic.Anthropic()
 
-_SCHEMA_CONTEXT = """
-## Database Schema
+SCHEMA_CONTEXT = """
+You have access to two primary tables for querying CloudCarbon data.
 
-### Table: focus_records
-| Column | Type | Description |
-|--------|------|-------------|
-| id | UUID | Primary key |
-| tenant_id | UUID | Tenant identifier |
-| provider_name | TEXT | Cloud provider: AWS, Azure, GCP, Alibaba |
-| service_name | TEXT | Cloud service name |
-| service_category | TEXT | Service category |
-| region_id | TEXT | Region identifier |
-| resource_id | TEXT | Cloud resource identifier |
-| resource_name | TEXT | Human-readable resource name |
-| effective_cost | NUMERIC | Effective cost in USD |
-| charge_period_start | TIMESTAMPTZ | Start of charge period |
-| charge_period_end | TIMESTAMPTZ | End of charge period |
+TABLE: enriched_records
+This is the main analytics table. Each row represents one cloud billing line item with all enrichment applied.
 
-### Table: enriched_records
-| Column | Type | Description |
-|--------|------|-------------|
-| id | UUID | Primary key |
-| focus_record_id | UUID | Foreign key to focus_records.id |
-| tenant_id | UUID | Tenant identifier |
-| total_co2e_kg | NUMERIC | Total carbon all scopes (kg CO2e) |
-| scope3_total_co2e_kg | NUMERIC | Total Scope 3 carbon |
-| water_litres | NUMERIC | Estimated water consumption |
-| water_stress_adjusted_litres | NUMERIC | Water adjusted for regional stress |
+Columns:
+- id: UUID, primary key
+- tenant_id: UUID, always filter by this, value provided in system context
+- focus_record_id: UUID, links to the raw billing record
+- billing_period_start: timestamp, when the billing period started
+- billing_period_end: timestamp, when the billing period ended
+- provider: text, one of: aws, azure, gcp, alibaba
+- service_name: text, the cloud service name (e.g. Amazon EC2, Azure Virtual Machines)
+- service_category: text, one of: Compute, Storage, Networking, Database, AI and Machine Learning, Other
+- region: text, cloud region identifier (e.g. us-east-1, eastus, us-central1)
+- resource_id: text, unique resource identifier
+- resource_type: text, resource type (e.g. m5.large, Standard_D4s_v3)
+- cost_usd: numeric, actual cost in US dollars
+- usage_quantity: numeric, amount of resource consumed
+- usage_unit: text, unit of consumption
+- scope1_co2e_kg: numeric, direct emissions in kg CO2 equivalent (always 0 for cloud)
+- scope2_co2e_kg_location: numeric, location-based Scope 2 emissions in kg CO2e
+- scope2_co2e_kg_market: numeric, market-based Scope 2 emissions in kg CO2e
+- scope3_cat1_co2e_kg: numeric, embodied carbon (hardware manufacturing) in kg CO2e
+- scope3_cat3_co2e_kg: numeric, upstream energy supply chain in kg CO2e
+- scope3_cat12_co2e_kg: numeric, end-of-life hardware treatment in kg CO2e
+- scope3_total_co2e_kg: numeric, sum of all Scope 3 categories in kg CO2e
+- scope3_confidence: text, one of: high, medium, low
+- total_co2e_kg: numeric, total emissions (scope2_location + scope3_total) in kg CO2e
+- carbon_intensity_gco2_kwh: numeric, grid carbon intensity in gCO2/kWh
+- estimated_kwh: numeric, estimated electricity consumed in kWh
+- hardware_family: text, resolved hardware class (e.g. intel_xeon_cascade_lake)
+- water_litres: numeric, estimated water consumption in litres
+- water_stress_score: numeric, WRI Aqueduct water stress 0-5 scale (5 = extreme stress)
+- water_stress_adjusted_litres: numeric, water consumption weighted by regional stress
+- enriched_at: timestamp, when enrichment was run
 
-### Common Join Pattern
-SELECT fr.*, er.* FROM focus_records fr
-JOIN enriched_records er ON er.focus_record_id = fr.id
-WHERE fr.tenant_id = '{tenant_id}'
+TABLE: focus_records
+Raw normalized billing records before enrichment. Use enriched_records for most queries.
+Key columns: id, tenant_id, provider, service_name, region, resource_id, cost_usd, billing_period_start
+
+COMMON QUERY PATTERNS:
+
+Total spend by provider:
+SELECT provider, SUM(cost_usd) as total_cost FROM enriched_records WHERE tenant_id = '{tenant_id}' GROUP BY provider ORDER BY total_cost DESC
+
+Top services by carbon:
+SELECT service_name, SUM(total_co2e_kg) as total_carbon FROM enriched_records WHERE tenant_id = '{tenant_id}' GROUP BY service_name ORDER BY total_carbon DESC LIMIT 10
+
+Monthly cost trend:
+SELECT DATE_TRUNC('month', billing_period_start) as month, SUM(cost_usd) as cost, SUM(total_co2e_kg) as co2e FROM enriched_records WHERE tenant_id = '{tenant_id}' GROUP BY month ORDER BY month
+
+Water consumption by region:
+SELECT region, provider, SUM(water_litres) as water, AVG(water_stress_score) as avg_stress FROM enriched_records WHERE tenant_id = '{tenant_id}' GROUP BY region, provider ORDER BY water DESC
+
+Scope 3 breakdown:
+SELECT SUM(scope3_cat1_co2e_kg) as embodied, SUM(scope3_cat3_co2e_kg) as upstream, SUM(scope3_cat12_co2e_kg) as eol FROM enriched_records WHERE tenant_id = '{tenant_id}'
+
+Carbon efficiency (kg CO2e per $1000 spend):
+SELECT provider, (SUM(total_co2e_kg) / SUM(cost_usd) * 1000) as kg_per_1000_usd FROM enriched_records WHERE tenant_id = '{tenant_id}' GROUP BY provider
 """
-
-_SYSTEM_PROMPT = """You are a data query assistant for CloudCarbon.
-Translate natural language questions into PostgreSQL SELECT queries.
-Rules:
-1. ONLY generate SELECT statements.
-2. Always include tenant_id = '{tenant_id}' in WHERE clause.
-3. Return ONLY the SQL query, no explanation.
-4. If question cannot be answered, return: UNSUPPORTED
-5. Never use semicolons.
-6. Use table aliases (fr for focus_records, er for enriched_records).
-7. LIMIT results to 1000 rows."""
 
 
 @dataclass
@@ -79,113 +94,124 @@ class NLQueryResult:
     error: Optional[str] = None
 
 
-def _validate_sql(sql: str, tenant_id: UUID) -> Optional[str]:
-    sql_stripped = sql.strip()
-    if not sql_stripped.upper().startswith("SELECT"):
-        return "Generated SQL does not start with SELECT"
-    if ";" in sql_stripped:
-        return "SQL contains semicolon"
-    dangerous = re.compile(r"\b(INSERT|UPDATE|DELETE|DROP|CREATE|ALTER|TRUNCATE|GRANT|REVOKE|EXEC|EXECUTE)\b", re.IGNORECASE)
-    match = dangerous.search(sql_stripped)
-    if match:
-        return f"SQL contains forbidden keyword: {match.group()}"
-    if str(tenant_id) not in sql_stripped and "tenant_id" not in sql_stripped.lower():
-        return "SQL does not contain tenant_id filter"
-    return None
-
-
-def _call_llm(messages: list[dict], max_tokens: int = _MAX_TOKENS) -> str:
-    """Call Anthropic Claude and return the response text."""
-    try:
-        import anthropic
-        client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY", ""))
-
-        # Convert from OpenAI-style to Anthropic-style
-        system_msg = ""
-        user_messages = []
-        for msg in messages:
-            if msg["role"] == "system":
-                system_msg = msg["content"]
-            else:
-                user_messages.append({"role": msg["role"], "content": msg["content"]})
-
-        response = client.messages.create(
-            model="claude-haiku-4-5-20251001",
-            max_tokens=max_tokens,
-            system=system_msg,
-            messages=user_messages,
-        )
-        return response.content[0].text.strip()
-    except Exception as exc:
-        raise RuntimeError(f"LLM call failed: {exc}") from exc
-
-
-def natural_language_to_sql(
-    question: str, tenant_id: UUID, db: Session,
-) -> NLQueryResult:
+def natural_language_to_sql(question: str, tenant_id: UUID, db: Session) -> NLQueryResult:
     tenant_str = str(tenant_id)
-    schema = _SCHEMA_CONTEXT.replace("{tenant_id}", tenant_str)
-    system = _SYSTEM_PROMPT.replace("{tenant_id}", tenant_str)
 
-    messages = [
-        {"role": "system", "content": system},
-        {"role": "user", "content": f"Schema:\n{schema}\n\nQuestion: {question}"},
-    ]
+    system_prompt = f"""You are a PostgreSQL query assistant for CloudCarbon, a multi-cloud sustainability platform.
+
+Your job: translate the user's natural language question into a single valid PostgreSQL SELECT query.
+
+Rules you must follow:
+1. Only generate SELECT statements. Never INSERT, UPDATE, DELETE, DROP, ALTER, or any DDL.
+2. Always include WHERE tenant_id = '{tenant_str}' in every query.
+3. Return ONLY the SQL query, nothing else. No explanation, no markdown, no backticks.
+4. If the question cannot be answered with the available schema, return exactly: UNSUPPORTED
+5. Always use table aliases for readability.
+6. Limit results to 1000 rows maximum using LIMIT 1000 unless the user asks for a specific limit.
+7. For date filtering, use billing_period_start column.
+8. All monetary values are in USD. All carbon values are in kg CO2e. All water values are in litres.
+
+{SCHEMA_CONTEXT}"""
 
     try:
-        raw_sql = _call_llm(messages)
+        response = client.messages.create(
+            model="claude-sonnet-4-20250514",
+            max_tokens=500,
+            system=system_prompt,
+            messages=[{"role": "user", "content": question}],
+        )
+        sql = response.content[0].text.strip()
     except Exception as exc:
         logger.error("LLM call failed: %s", exc)
         return NLQueryResult(supported=False, question=question, error=f"LLM unavailable: {exc}")
 
-    if raw_sql.strip().upper() == "UNSUPPORTED":
-        return NLQueryResult(supported=False, question=question)
+    if sql.upper() == "UNSUPPORTED":
+        return NLQueryResult(supported=False, question=question, sql=None, results=[], row_count=0, suggestions=[])
 
-    sql = re.sub(r"^```(?:sql)?\s*", "", raw_sql, flags=re.IGNORECASE)
+    # Strip markdown fences if model adds them despite instructions
+    sql = re.sub(r"^```(?:sql)?\s*", "", sql, flags=re.IGNORECASE)
     sql = re.sub(r"\s*```$", "", sql).strip()
 
-    validation_error = _validate_sql(sql, tenant_id)
-    if validation_error:
-        return NLQueryResult(supported=False, question=question, sql=sql, error=f"SQL validation failed: {validation_error}")
+    sql_upper = sql.upper().strip()
+    if not sql_upper.startswith("SELECT"):
+        return NLQueryResult(
+            supported=False, question=question, sql=None, results=[], row_count=0, suggestions=[],
+            error="Generated query was not a SELECT statement",
+        )
 
-    # Execute with timeout via threading
-    result_container: dict[str, Any] = {}
+    # Re-inject tenant filter if Claude dropped it
+    if tenant_str not in sql:
+        sql = sql.rstrip(";")
+        if "WHERE" in sql_upper:
+            sql = sql + f" AND tenant_id = '{tenant_str}'"
+        else:
+            sql = sql + f" WHERE tenant_id = '{tenant_str}'"
 
-    def _execute():
-        try:
-            res = db.execute(text(sql))
-            rows = res.fetchmany(_MAX_RESULT_ROWS)
-            columns = list(res.keys()) if res.keys() else []
-            result_container["results"] = [dict(zip(columns, row)) for row in rows]
-        except Exception as exc:
-            result_container["error"] = str(exc)
+    # Remove semicolons to prevent statement chaining
+    sql = sql.replace(";", "")
 
-    t = threading.Thread(target=_execute)
-    t.start()
-    t.join(timeout=_QUERY_TIMEOUT_SECONDS)
+    # Reject any non-SELECT statements (secondary safety check)
+    dangerous = re.compile(
+        r"\b(INSERT|UPDATE|DELETE|DROP|CREATE|ALTER|TRUNCATE|GRANT|REVOKE|EXEC|EXECUTE)\b",
+        re.IGNORECASE,
+    )
+    if dangerous.search(sql):
+        return NLQueryResult(
+            supported=False, question=question, sql=None, results=[], row_count=0, suggestions=[],
+            error="Generated query contained a forbidden keyword",
+        )
 
-    if t.is_alive():
-        return NLQueryResult(supported=True, question=question, sql=sql, results=[], row_count=0, error="Query timed out after 10 seconds")
-
-    if "error" in result_container:
-        return NLQueryResult(supported=True, question=question, sql=sql, results=[], row_count=0, error=f"Query execution failed: {result_container['error']}")
-
-    results = result_container.get("results", [])
-    return NLQueryResult(supported=True, question=question, sql=sql, results=results, row_count=len(results))
-
-
-def suggest_followup_questions(question: str, results_summary: str) -> list[str]:
-    messages = [
-        {"role": "system", "content": "You are a helpful data analyst for CloudCarbon. Generate exactly 3 concise follow-up questions. Return only the 3 questions, one per line, no numbering or bullets."},
-        {"role": "user", "content": f"Original question: {question}\n\nResults summary: {results_summary}\n\nSuggest 3 follow-up questions:"},
-    ]
+    # Execute with PostgreSQL statement timeout
     try:
-        response = _call_llm(messages, max_tokens=200)
-        lines = [line.strip() for line in response.split("\n") if line.strip()]
-        return lines[:3]
+        result = db.execute(text(f"SET LOCAL statement_timeout = '10s'; {sql}"))
+        rows = result.fetchall()
+        columns = list(result.keys())
+        results = [dict(zip(columns, row)) for row in rows]
+    except Exception as exc:
+        return NLQueryResult(
+            supported=True, question=question, sql=sql, results=[], row_count=0,
+            error=str(exc), suggestions=[],
+        )
+
+    suggestions = generate_followup_suggestions(question, len(results), columns)
+
+    return NLQueryResult(
+        supported=True,
+        question=question,
+        sql=sql,
+        results=results,
+        row_count=len(results),
+        suggestions=suggestions,
+    )
+
+
+def generate_followup_suggestions(question: str, result_count: int, columns: list) -> list[str]:
+    try:
+        response = client.messages.create(
+            model="claude-sonnet-4-20250514",
+            max_tokens=200,
+            messages=[{
+                "role": "user",
+                "content": (
+                    f'The user asked: "{question}"\n'
+                    f"The query returned {result_count} rows with columns: {', '.join(columns)}.\n\n"
+                    "Generate exactly 3 short follow-up questions the user might want to ask next.\n"
+                    'Return them as a JSON array of strings, nothing else.\n'
+                    'Example: ["Which region has the highest carbon intensity?", '
+                    '"How has this changed over the last 3 months?", '
+                    '"Which team owns the most expensive resources?"]'
+                ),
+            }],
+        )
+        return json.loads(response.content[0].text.strip())
     except Exception:
         return [
-            "What is the trend over the last 3 months?",
-            "Which region has the highest carbon intensity?",
-            "What are the top 5 resources by cost?",
+            "How has this changed over the last 30 days?",
+            "Which provider contributes most to this metric?",
+            "What are the top optimization opportunities?",
         ]
+
+
+# Keep the old name as an alias so the router import still works
+def suggest_followup_questions(question: str, results_summary: str) -> list[str]:
+    return generate_followup_suggestions(question, 0, [])

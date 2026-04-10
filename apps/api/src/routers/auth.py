@@ -150,11 +150,11 @@ def refresh_token(
 # POST /auth/logout
 # ---------------------------------------------------------------------------
 
-@router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
+@router.post("/logout", status_code=status.HTTP_200_OK)
 def logout(
     request: RefreshTokenRequest,
     redis_client: Annotated[redis.Redis, Depends(get_redis)],
-) -> None:
+):
     """Invalidate a refresh token by removing its JTI from Redis."""
     try:
         payload = decode_token(request.refresh_token)
@@ -168,6 +168,7 @@ def logout(
             redis_client.setex(f"blacklist:jti:{payload.jti}", remaining_ttl, "1")
 
     logger.info("User logged out", user_id=payload.sub)
+    return {"status": "logged_out"}
 
 
 # ---------------------------------------------------------------------------

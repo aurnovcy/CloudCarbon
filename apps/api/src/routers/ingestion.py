@@ -67,7 +67,7 @@ def upload_billing_file(
     file: UploadFile = File(...),
     account_id: UUID = Query(...),
     provider: str | None = Query(None),
-    current_user: User = Depends(require_role("analyst", "engineer", "admin")),
+    current_user: User = Depends(require_role("analyst")),
     db: Session = Depends(get_db),
 ) -> IngestionResultResponse:
     import tempfile, os
@@ -118,7 +118,7 @@ def upload_billing_file(
 def trigger_sync(
     account_id: UUID,
     background_tasks: BackgroundTasks,
-    current_user: User = Depends(require_role("engineer", "admin")),
+    current_user: User = Depends(require_role("engineer")),
     db: Session = Depends(get_db),
 ) -> SyncJobResponse:
     account_result = db.execute(
@@ -214,7 +214,7 @@ def get_sync_status(
 
 @accounts_router.get("/accounts", response_model=CloudAccountListResponse)
 def list_accounts(
-    current_user: User = Depends(require_role("viewer", "analyst", "engineer", "admin")),
+    current_user: User = Depends(require_role("viewer")),
     db: Session = Depends(get_db),
 ) -> CloudAccountListResponse:
     accounts_result = db.execute(
@@ -274,12 +274,12 @@ def create_account(
     )
 
 
-@accounts_router.delete("/accounts/{account_id}", status_code=status.HTTP_204_NO_CONTENT)
+@accounts_router.delete("/accounts/{account_id}", status_code=status.HTTP_200_OK)
 def delete_account(
     account_id: UUID,
     current_user: User = Depends(require_role("admin")),
     db: Session = Depends(get_db),
-) -> None:
+):
     account_result = db.execute(
         select(CloudAccount).where(CloudAccount.id == account_id, CloudAccount.tenant_id == current_user.tenant_id)
     )
@@ -297,6 +297,7 @@ def delete_account(
         "before_state": json.dumps({"name": account.name, "provider": account.provider}),
     })
     db.commit()
+    return {"status": "deleted", "account_id": str(account_id)}
 
 
 def _validate_provider_credentials(body: CloudAccountCreate) -> CredentialValidationResult:

@@ -12,10 +12,10 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from database import get_db, SessionLocal
-from dependencies.auth import get_current_user, require_role
-from models.user import User
-from schemas.agents import (
+from src.database import get_db, SessionLocal
+from src.dependencies.auth import get_current_user, require_role
+from src.models.user import User
+from src.schemas.agents import (
     AgentConfigPatchRequest,
     AgentConfigResponse,
     AgentRunListResponse,

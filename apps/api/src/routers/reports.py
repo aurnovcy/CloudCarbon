@@ -334,3 +334,115 @@ def get_water_report(
         "total_water_stress_adjusted_litres": float(totals[1] or 0),
         "by_region": by_region, "by_service_category": by_cat, "high_stress_regions": high_stress,
     }
+
+
+@router.get("/executive-summary")
+def get_executive_summary(
+    start_date: Optional[str] = Query(None),
+    end_date: Optional[str] = Query(None),
+    current_user=Depends(require_role("viewer")),
+    db: Session = Depends(get_db),
+):
+    from src.reports.generator import generate_executive_summary, ReportData
+
+    today = date.today()
+    end = _parse_date(end_date, today)
+    start = _parse_date(start_date, today.replace(day=1))
+    tenant_id = str(current_user.tenant_id)
+
+    # Main period aggregates (join focus_records + enriched_records)
+    row = db.execute(text("""
+        SELECT
+            COALESCE(SUM(fr.effective_cost), 0)               AS total_cost,
+            COALESCE(SUM(er.total_co2e_kg), 0)                AS total_co2e,
+            COALESCE(SUM(er.scope3_total_co2e_kg), 0)         AS scope3_co2e,
+            COALESCE(SUM(er.water_litres), 0)                 AS water,
+            COALESCE(SUM(er.water_stress_adjusted_litres), 0) AS water_stress
+        FROM focus_records fr
+        JOIN enriched_records er ON er.focus_record_id = fr.id
+        WHERE fr.tenant_id = :tid
+          AND DATE(fr.charge_period_start) BETWEEN :start AND :end
+    """), {"tid": tenant_id, "start": start, "end": end}).fetchone()
+
+    # Top provider by carbon
+    top_provider_carbon = db.execute(text("""
+        SELECT fr.provider_name
+        FROM focus_records fr
+        JOIN enriched_records er ON er.focus_record_id = fr.id
+        WHERE fr.tenant_id = :tid
+        GROUP BY fr.provider_name
+        ORDER BY SUM(er.total_co2e_kg) DESC
+        LIMIT 1
+    """), {"tid": tenant_id}).scalar() or "Unknown"
+
+    # Top provider by cost
+    top_provider_cost = db.execute(text("""
+        SELECT provider_name
+        FROM focus_records
+        WHERE tenant_id = :tid
+        GROUP BY provider_name
+        ORDER BY SUM(effective_cost) DESC
+        LIMIT 1
+    """), {"tid": tenant_id}).scalar() or "Unknown"
+
+    # Top service by carbon
+    top_service = db.execute(text("""
+        SELECT fr.service_name
+        FROM focus_records fr
+        JOIN enriched_records er ON er.focus_record_id = fr.id
+        WHERE fr.tenant_id = :tid
+        GROUP BY fr.service_name
+        ORDER BY SUM(er.total_co2e_kg) DESC
+        LIMIT 1
+    """), {"tid": tenant_id}).scalar() or "Unknown"
+
+    # Open recommendations
+    open_recs = db.execute(text("""
+        SELECT
+            COUNT(*),
+            COALESCE(SUM(cost_impact_monthly_usd), 0),
+            COALESCE(SUM(co2e_impact_monthly_kg), 0)
+        FROM recommendations
+        WHERE tenant_id = :tid AND status = 'open'
+    """), {"tid": tenant_id}).fetchone()
+
+    # High water stress regions (score > 3.0)
+    stress_regions = db.execute(text("""
+        SELECT DISTINCT fr.region_id
+        FROM focus_records fr
+        JOIN enriched_records er ON er.focus_record_id = fr.id
+        WHERE fr.tenant_id = :tid
+          AND er.water_stress_score > 3.0
+        ORDER BY fr.region_id
+    """), {"tid": tenant_id}).fetchall()
+    high_stress_water_regions = [r[0] for r in stress_regions if r[0]]
+
+    total_co2e = float(row.total_co2e or 0)
+    total_cost = float(row.total_cost or 0)
+    scope3_co2e = float(row.scope3_co2e or 0)
+    scope3_pct = (scope3_co2e / total_co2e * 100) if total_co2e > 0 else 0.0
+    carbon_efficiency = (total_co2e / total_cost * 1000) if total_cost > 0 else 0.0
+
+    data = ReportData(
+        period_start=start.isoformat(),
+        period_end=end.isoformat(),
+        total_cost_usd=total_cost,
+        total_co2e_kg=total_co2e,
+        scope3_co2e_kg=scope3_co2e,
+        scope3_pct=scope3_pct,
+        total_water_litres=float(row.water or 0),
+        water_stress_adjusted_litres=float(row.water_stress or 0),
+        carbon_efficiency=carbon_efficiency,
+        cost_mom_pct=0.0,
+        co2e_mom_pct=0.0,
+        water_mom_pct=0.0,
+        top_provider_by_cost=top_provider_cost,
+        top_provider_by_carbon=top_provider_carbon,
+        top_service_by_carbon=top_service,
+        open_recommendations_count=int(open_recs[0] or 0),
+        total_cost_opportunity_usd=float(open_recs[1] or 0),
+        total_co2e_opportunity_kg=float(open_recs[2] or 0),
+        high_stress_water_regions=high_stress_water_regions,
+    )
+
+    return generate_executive_summary(data)

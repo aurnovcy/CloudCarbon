@@ -51,7 +51,7 @@ def get_overview(
     prev_end = start - timedelta(days=1)
     prev_start = prev_end - timedelta(days=duration)
 
-    provider_filter = "AND LOWER(fr.provider_name) = LOWER(:provider)" if provider else ""
+    provider_filter = "AND LOWER(fr.provider) = LOWER(:provider)" if provider else ""
     params: dict = {
         "tenant_id": tenant_id, "start": start, "end": end,
         "prev_start": prev_start, "prev_end": prev_end,
@@ -61,7 +61,7 @@ def get_overview(
 
     totals_sql = text(f"""
         SELECT
-            COALESCE(SUM(fr.effective_cost), 0)                   AS cost_usd,
+            COALESCE(SUM(fr.cost_usd), 0)                   AS cost_usd,
             COALESCE(SUM(er.total_co2e_kg), 0)                    AS co2e_kg,
             COALESCE(SUM(er.scope3_total_co2e_kg), 0)             AS scope3_co2e_kg,
             COALESCE(SUM(er.water_litres), 0)                     AS water_litres,
@@ -69,7 +69,7 @@ def get_overview(
         FROM focus_records fr
         JOIN enriched_records er ON er.focus_record_id = fr.id
         WHERE fr.tenant_id = :tenant_id
-          AND DATE(fr.charge_period_start) BETWEEN :start AND :end
+          AND DATE(fr.billing_period_start) BETWEEN :start AND :end
           {provider_filter}
     """)
     cur = db.execute(totals_sql, params).fetchone()
@@ -82,13 +82,13 @@ def get_overview(
     prev_params = {**params, "start": prev_start, "end": prev_end}
     prev_sql = text(f"""
         SELECT
-            COALESCE(SUM(fr.effective_cost), 0),
+            COALESCE(SUM(fr.cost_usd), 0),
             COALESCE(SUM(er.total_co2e_kg), 0),
             COALESCE(SUM(er.water_litres), 0)
         FROM focus_records fr
         JOIN enriched_records er ON er.focus_record_id = fr.id
         WHERE fr.tenant_id = :tenant_id
-          AND DATE(fr.charge_period_start) BETWEEN :start AND :end
+          AND DATE(fr.billing_period_start) BETWEEN :start AND :end
           {provider_filter}
     """)
     prev = db.execute(prev_sql, prev_params).fetchone()
@@ -100,16 +100,16 @@ def get_overview(
     scope3_pct = (scope3_cur / co2e_cur * 100) if co2e_cur > 0 else 0.0
 
     by_prov_sql = text(f"""
-        SELECT fr.provider_name,
-               COALESCE(SUM(fr.effective_cost), 0) AS cost_usd,
+        SELECT fr.provider,
+               COALESCE(SUM(fr.cost_usd), 0) AS cost_usd,
                COALESCE(SUM(er.total_co2e_kg), 0)  AS co2e_kg,
                COALESCE(SUM(er.water_litres), 0)   AS water_litres
         FROM focus_records fr
         JOIN enriched_records er ON er.focus_record_id = fr.id
         WHERE fr.tenant_id = :tenant_id
-          AND DATE(fr.charge_period_start) BETWEEN :start AND :end
+          AND DATE(fr.billing_period_start) BETWEEN :start AND :end
           {provider_filter}
-        GROUP BY fr.provider_name ORDER BY cost_usd DESC
+        GROUP BY fr.provider ORDER BY cost_usd DESC
     """)
     by_prov = [
         {"provider": r[0], "cost_usd": float(r[1] or 0), "co2e_kg": float(r[2] or 0), "water_litres": float(r[3] or 0)}
@@ -118,13 +118,13 @@ def get_overview(
 
     by_cat_sql = text(f"""
         SELECT fr.service_category,
-               COALESCE(SUM(fr.effective_cost), 0) AS cost_usd,
+               COALESCE(SUM(fr.cost_usd), 0) AS cost_usd,
                COALESCE(SUM(er.total_co2e_kg), 0)  AS co2e_kg,
                COALESCE(SUM(er.water_litres), 0)   AS water_litres
         FROM focus_records fr
         JOIN enriched_records er ON er.focus_record_id = fr.id
         WHERE fr.tenant_id = :tenant_id
-          AND DATE(fr.charge_period_start) BETWEEN :start AND :end
+          AND DATE(fr.billing_period_start) BETWEEN :start AND :end
           {provider_filter}
         GROUP BY fr.service_category ORDER BY cost_usd DESC
     """)
@@ -134,17 +134,17 @@ def get_overview(
     ]
 
     top_res_sql = text(f"""
-        SELECT fr.resource_id, fr.resource_name, fr.provider_name, fr.region_id,
+        SELECT fr.resource_id, fr.resource_type, fr.provider, fr.region,
                fr.service_name,
                COALESCE(SUM(er.total_co2e_kg), 0) AS co2e_kg,
-               COALESCE(SUM(fr.effective_cost), 0) AS cost_usd
+               COALESCE(SUM(fr.cost_usd), 0) AS cost_usd
         FROM focus_records fr
         JOIN enriched_records er ON er.focus_record_id = fr.id
         WHERE fr.tenant_id = :tenant_id
-          AND DATE(fr.charge_period_start) BETWEEN :start AND :end
+          AND DATE(fr.billing_period_start) BETWEEN :start AND :end
           {provider_filter}
-        GROUP BY fr.resource_id, fr.resource_name, fr.provider_name,
-                 fr.region_id, fr.service_name
+        GROUP BY fr.resource_id, fr.resource_type, fr.provider,
+                 fr.region, fr.service_name
         ORDER BY co2e_kg DESC LIMIT 10
     """)
     top_resources = [
@@ -185,7 +185,7 @@ def get_carbon_report(
     end = _parse_date(end_date, today)
     start = _parse_date(start_date, (today - timedelta(days=30)))
 
-    provider_filter = "AND LOWER(fr.provider_name) = LOWER(:provider)" if provider else ""
+    provider_filter = "AND LOWER(fr.provider) = LOWER(:provider)" if provider else ""
     params: dict = {"tenant_id": tenant_id, "start": start, "end": end}
     if provider:
         params["provider"] = provider
@@ -195,7 +195,7 @@ def get_carbon_report(
 
     ts_sql = text(f"""
         SELECT
-            DATE_TRUNC('{trunc}', fr.charge_period_start)::DATE AS period,
+            DATE_TRUNC('{trunc}', fr.billing_period_start)::DATE AS period,
             COALESCE(SUM(er.scope2_co2e_kg_location), 0)        AS scope2_location,
             COALESCE(SUM(er.scope2_co2e_kg_market), 0)          AS scope2_market,
             COALESCE(SUM(er.scope3_total_co2e_kg), 0)           AS scope3_total,
@@ -203,7 +203,7 @@ def get_carbon_report(
         FROM focus_records fr
         JOIN enriched_records er ON er.focus_record_id = fr.id
         WHERE fr.tenant_id = :tenant_id
-          AND DATE(fr.charge_period_start) BETWEEN :start AND :end
+          AND DATE(fr.billing_period_start) BETWEEN :start AND :end
           {provider_filter}
         GROUP BY period ORDER BY period ASC
     """)
@@ -214,15 +214,15 @@ def get_carbon_report(
     ]
 
     region_sql = text(f"""
-        SELECT fr.region_id, fr.provider_name,
+        SELECT fr.region, fr.provider,
                COALESCE(SUM(er.total_co2e_kg), 0)               AS co2e_kg,
                COALESCE(AVG(er.carbon_intensity_gco2_kwh), 0)   AS avg_intensity
         FROM focus_records fr
         JOIN enriched_records er ON er.focus_record_id = fr.id
         WHERE fr.tenant_id = :tenant_id
-          AND DATE(fr.charge_period_start) BETWEEN :start AND :end
+          AND DATE(fr.billing_period_start) BETWEEN :start AND :end
           {provider_filter}
-        GROUP BY fr.region_id, fr.provider_name ORDER BY co2e_kg DESC
+        GROUP BY fr.region, fr.provider ORDER BY co2e_kg DESC
     """)
     by_region = [
         {"region_id": r[0], "provider": r[1], "co2e_kg": float(r[2] or 0), "carbon_intensity_gco2_kwh": float(r[3] or 0)}
@@ -242,7 +242,7 @@ def get_carbon_report(
         FROM focus_records fr
         JOIN enriched_records er ON er.focus_record_id = fr.id
         WHERE fr.tenant_id = :tenant_id
-          AND DATE(fr.charge_period_start) BETWEEN :start AND :end
+          AND DATE(fr.billing_period_start) BETWEEN :start AND :end
           {provider_filter}
     """)
     s3 = db.execute(s3_sql, params).fetchone()
@@ -276,7 +276,7 @@ def get_water_report(
     end = _parse_date(end_date, today)
     start = _parse_date(start_date, (today - timedelta(days=30)))
 
-    provider_filter = "AND LOWER(fr.provider_name) = LOWER(:provider)" if provider else ""
+    provider_filter = "AND LOWER(fr.provider) = LOWER(:provider)" if provider else ""
     params: dict = {"tenant_id": tenant_id, "start": start, "end": end}
     if provider:
         params["provider"] = provider
@@ -288,13 +288,13 @@ def get_water_report(
         FROM focus_records fr
         JOIN enriched_records er ON er.focus_record_id = fr.id
         WHERE fr.tenant_id = :tenant_id
-          AND DATE(fr.charge_period_start) BETWEEN :start AND :end
+          AND DATE(fr.billing_period_start) BETWEEN :start AND :end
           {provider_filter}
     """)
     totals = db.execute(totals_sql, params).fetchone()
 
     region_sql = text(f"""
-        SELECT fr.region_id, fr.provider_name,
+        SELECT fr.region, fr.provider,
                COALESCE(SUM(er.water_litres), 0),
                COALESCE(SUM(er.water_stress_adjusted_litres), 0),
                COALESCE(AVG(er.water_stress_score), 0),
@@ -302,9 +302,9 @@ def get_water_report(
         FROM focus_records fr
         JOIN enriched_records er ON er.focus_record_id = fr.id
         WHERE fr.tenant_id = :tenant_id
-          AND DATE(fr.charge_period_start) BETWEEN :start AND :end
+          AND DATE(fr.billing_period_start) BETWEEN :start AND :end
           {provider_filter}
-        GROUP BY fr.region_id, fr.provider_name, er.water_data_source
+        GROUP BY fr.region, fr.provider, er.water_data_source
         ORDER BY water_litres DESC
     """)
     by_region = [
@@ -319,7 +319,7 @@ def get_water_report(
         FROM focus_records fr
         JOIN enriched_records er ON er.focus_record_id = fr.id
         WHERE fr.tenant_id = :tenant_id
-          AND DATE(fr.charge_period_start) BETWEEN :start AND :end
+          AND DATE(fr.billing_period_start) BETWEEN :start AND :end
           {provider_filter}
         GROUP BY fr.service_category ORDER BY water_litres DESC
     """)
@@ -353,7 +353,7 @@ def get_executive_summary(
     # Main period aggregates (join focus_records + enriched_records)
     row = db.execute(text("""
         SELECT
-            COALESCE(SUM(fr.effective_cost), 0)               AS total_cost,
+            COALESCE(SUM(fr.cost_usd), 0)               AS total_cost,
             COALESCE(SUM(er.total_co2e_kg), 0)                AS total_co2e,
             COALESCE(SUM(er.scope3_total_co2e_kg), 0)         AS scope3_co2e,
             COALESCE(SUM(er.water_litres), 0)                 AS water,
@@ -361,27 +361,27 @@ def get_executive_summary(
         FROM focus_records fr
         JOIN enriched_records er ON er.focus_record_id = fr.id
         WHERE fr.tenant_id = :tid
-          AND DATE(fr.charge_period_start) BETWEEN :start AND :end
+          AND DATE(fr.billing_period_start) BETWEEN :start AND :end
     """), {"tid": tenant_id, "start": start, "end": end}).fetchone()
 
     # Top provider by carbon
     top_provider_carbon = db.execute(text("""
-        SELECT fr.provider_name
+        SELECT fr.provider
         FROM focus_records fr
         JOIN enriched_records er ON er.focus_record_id = fr.id
         WHERE fr.tenant_id = :tid
-        GROUP BY fr.provider_name
+        GROUP BY fr.provider
         ORDER BY SUM(er.total_co2e_kg) DESC
         LIMIT 1
     """), {"tid": tenant_id}).scalar() or "Unknown"
 
     # Top provider by cost
     top_provider_cost = db.execute(text("""
-        SELECT provider_name
+        SELECT provider
         FROM focus_records
         WHERE tenant_id = :tid
-        GROUP BY provider_name
-        ORDER BY SUM(effective_cost) DESC
+        GROUP BY provider
+        ORDER BY SUM(cost_usd) DESC
         LIMIT 1
     """), {"tid": tenant_id}).scalar() or "Unknown"
 
@@ -408,12 +408,12 @@ def get_executive_summary(
 
     # High water stress regions (score > 3.0)
     stress_regions = db.execute(text("""
-        SELECT DISTINCT fr.region_id
+        SELECT DISTINCT fr.region
         FROM focus_records fr
         JOIN enriched_records er ON er.focus_record_id = fr.id
         WHERE fr.tenant_id = :tid
           AND er.water_stress_score > 3.0
-        ORDER BY fr.region_id
+        ORDER BY fr.region
     """), {"tid": tenant_id}).fetchall()
     high_stress_water_regions = [r[0] for r in stress_regions if r[0]]
 

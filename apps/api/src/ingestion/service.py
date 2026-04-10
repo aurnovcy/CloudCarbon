@@ -86,7 +86,7 @@ def ingest_focus_records(
                     :region, :resource_id, :resource_type,
                     :usage_quantity, :usage_unit,
                     :cost_usd, :list_cost_usd, :currency,
-                    :tags::jsonb, :raw_data::jsonb, now()
+                    CAST(:tags AS jsonb), CAST(:raw_data AS jsonb), now()
                 )
                 ON CONFLICT (tenant_id, cloud_account_id, billing_period_start, resource_id, service_name)
                 DO UPDATE SET
@@ -127,7 +127,7 @@ def ingest_focus_records(
     try:
         db.execute(text("""
             INSERT INTO audit_logs (id, tenant_id, user_id, action, resource_type, resource_id, after_state, created_at)
-            VALUES (gen_random_uuid(), :tenant_id, NULL, 'ingest_records', 'focus_records', :cloud_account_id, :after_state::jsonb, now())
+            VALUES (gen_random_uuid(), :tenant_id, NULL, 'ingest_records', 'focus_records', :cloud_account_id, CAST(:after_state AS jsonb), now())
         """), {
             "tenant_id": str(tenant_id), "cloud_account_id": str(cloud_account_id),
             "after_state": json.dumps({"count": result.total, "inserted": result.inserted, "updated": result.updated}),

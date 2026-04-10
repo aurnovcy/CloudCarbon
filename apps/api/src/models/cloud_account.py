@@ -20,10 +20,10 @@ class CloudAccount(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     tenant_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True
     )
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
     # Enum: aws, azure, gcp, alibaba
     provider: Mapped[str] = mapped_column(String(20), nullable=False)
-    account_id: Mapped[str] = mapped_column(String(255), nullable=False)
-    display_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    account_identifier: Mapped[str] = mapped_column(String(255), nullable=False)
     # Encrypted vault reference — never store raw credentials
     credentials_ref: Mapped[str | None] = mapped_column(String(500), nullable=True)
     status: Mapped[str] = mapped_column(String(20), server_default="active", nullable=False)
@@ -37,4 +37,4 @@ class CloudAccount(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     )
 
     def __repr__(self) -> str:
-        return f"<CloudAccount id={self.id} provider={self.provider!r} account_id={self.account_id!r}>"
+        return f"<CloudAccount id={self.id} provider={self.provider!r} account_identifier={self.account_identifier!r}>"

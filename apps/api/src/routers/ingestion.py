@@ -290,7 +290,7 @@ def delete_account(
     db.execute(update(CloudAccount).where(CloudAccount.id == account_id).values(status="inactive", updated_at=datetime.now(tz=timezone.utc)))
     db.execute(text("""
         INSERT INTO audit_logs (id, tenant_id, user_id, action, resource_type, resource_id, before_state, created_at)
-        VALUES (gen_random_uuid(), :tenant_id, :user_id, 'delete_account', 'cloud_accounts', :account_id, :before_state::jsonb, now())
+        VALUES (gen_random_uuid(), :tenant_id, :user_id, 'delete_account', 'cloud_accounts', :account_id, CAST(:before_state AS jsonb), now())
     """), {
         "tenant_id": str(current_user.tenant_id), "user_id": str(current_user.id),
         "account_id": str(account_id),

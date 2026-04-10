@@ -1,7 +1,6 @@
 # ============================================================
 # CloudCarbon API — Production Multi-Stage Dockerfile
-# ============================================================
-# Stage 1: builder — installs Python dependencies with Poetry
+# Stage 1: builder — installs Python dependencies with pip
 # Stage 2: runtime — minimal image, non-root user, health check
 # ============================================================
 
@@ -12,26 +11,20 @@ WORKDIR /build
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    POETRY_VERSION=1.8.3 \
-    POETRY_HOME="/opt/poetry" \
-    POETRY_VIRTUALENVS_IN_PROJECT=true \
-    POETRY_NO_INTERACTION=1
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
 
-# Install build tools and Poetry
+# Install build tools
 RUN apt-get update && apt-get install -y --no-install-recommends \
         build-essential \
-        curl \
         libpq-dev \
-    && rm -rf /var/lib/apt/lists/* \
-    && curl -sSL https://install.python-poetry.org | python3 -
+    && rm -rf /var/lib/apt/lists/*
 
-ENV PATH="$POETRY_HOME/bin:$PATH"
+# Copy requirements first for layer caching
+COPY requirements.txt ./
 
-# Copy dependency files first (layer caching)
-COPY pyproject.toml poetry.lock* ./
-
-# Install dependencies into a virtual environment (no dev deps)
-RUN poetry install --only main --no-root --no-interaction --no-ansi
+# Install into a prefix directory
+RUN pip install --prefix=/install -r requirements.txt
 
 # Copy application source
 COPY src/ ./src/
@@ -58,8 +51,8 @@ RUN groupadd --gid 1001 cloudcarbon \
 
 WORKDIR /app
 
-# Copy virtual environment from builder
-COPY --from=builder /build/.venv /app/.venv
+# Copy installed packages from builder
+COPY --from=builder /install /usr/local
 
 # Copy application files
 COPY --from=builder /build/src /app/src
@@ -72,8 +65,6 @@ RUN chown -R cloudcarbon:cloudcarbon /app
 # Switch to non-root user
 USER cloudcarbon
 
-# Activate virtual environment
-ENV PATH="/app/.venv/bin:$PATH"
 ENV PYTHONPATH="/app"
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
@@ -82,16 +73,8 @@ ENV PYTHONUNBUFFERED=1
 EXPOSE 8000
 
 # Health check — polls the /health endpoint every 30s
-HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
     CMD curl -f http://localhost:8000/health || exit 1
 
-# Production: Uvicorn with uvloop + httptools for maximum throughput
-CMD ["uvicorn", "src.main:app", \
-     "--host", "0.0.0.0", \
-     "--port", "8000", \
-     "--workers", "4", \
-     "--loop", "uvloop", \
-     "--http", "httptools", \
-     "--proxy-headers", \
-     "--forwarded-allow-ips", "*", \
-     "--access-log"]
+# Run migrations then start the server
+CMD ["sh", "-c", "alembic upgrade head && uvicorn src.main:app --host 0.0.0.0 --port ${PORT:-8000} --workers 2 --proxy-headers --forwarded-allow-ips '*'"]

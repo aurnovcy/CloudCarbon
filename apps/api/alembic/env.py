@@ -37,6 +37,16 @@ import src.models  # noqa: F401, E402 — registers all models against Base
 # ---------------------------------------------------------------------------
 config = context.config
 
+# Load .env file so DATABASE_URL is available without manual export
+_dotenv_path = os.path.join(_api_dir, ".env")
+if os.path.isfile(_dotenv_path):
+    with open(_dotenv_path) as _f:
+        for _line in _f:
+            _line = _line.strip()
+            if _line and not _line.startswith("#") and "=" in _line:
+                _k, _, _v = _line.partition("=")
+                os.environ.setdefault(_k.strip(), _v.strip())
+
 # Allow DATABASE_URL env var to override alembic.ini
 _db_url = os.getenv("DATABASE_URL", "")
 if _db_url:

@@ -1,0 +1,22 @@
+# Railway deployment configuration for CloudCarbon API
+# Set root directory to "apps/api" in the Railway dashboard for this service.
+
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "Dockerfile"
+
+[deploy]
+# Run Alembic migrations then start the API server
+startCommand = "alembic upgrade head && uvicorn src.main:app --host 0.0.0.0 --port $PORT --workers 2 --proxy-headers --forwarded-allow-ips '*'"
+healthcheckPath = "/health"
+healthcheckTimeout = 60
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 3
+
+# Required environment variables (set in Railway dashboard):
+# DATABASE_URL       - PostgreSQL connection string (postgresql+psycopg2://...)
+# REDIS_URL          - Redis connection string (redis://...)
+# JWT_SECRET_KEY     - Secret key for JWT token signing (min 32 chars)
+# ANTHROPIC_API_KEY  - Anthropic API key for NL query and report generation
+# ENVIRONMENT        - "production" or "development"
+# (Optional) AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY for AWS billing sync

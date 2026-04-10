@@ -55,9 +55,9 @@ class EnrichmentService:
     def enrich_record(self, focus_record_id: uuid.UUID, db: Session) -> dict[str, Any]:
         result = db.execute(
             text("""
-                SELECT id, tenant_id, service_category, consumed_quantity, consumed_unit,
-                       resource_type, region_id, effective_cost, provider_name,
-                       charge_period_start, charge_period_end
+                SELECT id, tenant_id, service_category, usage_quantity, usage_unit,
+                       resource_type, region, cost_usd, provider,
+                       billing_period_start, billing_period_end
                 FROM focus_records WHERE id = :fid LIMIT 1
             """),
             {"fid": str(focus_record_id)},
@@ -203,7 +203,7 @@ class EnrichmentService:
                 SELECT fr.id FROM focus_records fr
                 LEFT JOIN enriched_records er ON er.focus_record_id = fr.id
                 WHERE fr.tenant_id = :tid AND er.id IS NULL
-                ORDER BY fr.created_at ASC LIMIT :lim
+                ORDER BY fr.ingested_at ASC LIMIT :lim
             """),
             {"tid": str(tenant_id), "lim": limit},
         )
@@ -232,7 +232,7 @@ class EnrichmentService:
             total_result = BatchEnrichmentResult()
 
             rows = db.execute(
-                text("SELECT id FROM focus_records WHERE tenant_id = :tid ORDER BY created_at ASC"),
+                text("SELECT id FROM focus_records WHERE tenant_id = :tid ORDER BY ingested_at ASC"),
                 {"tid": str(tenant_id)},
             )
             all_ids = [row[0] for row in rows.fetchall()]
